@@ -1,41 +1,67 @@
 import re
+import json
+import sqlite3
 import requests
 import numpy as np
 import pandas as pd
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 app = FastAPI()
+
+# 履歴・シミュレーション用DB初期化
+def init_db():
+    conn = sqlite3.connect("history.db")
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS race_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            race_name TEXT,
+            venue_info TEXT,
+            honmei TEXT,
+            ana TEXT,
+            tansho_bet TEXT,
+            sanrenpuku_bet TEXT,
+            sanrentan_bet TEXT,
+            result_rank TEXT DEFAULT '',
+            memo TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+init_db()
 
 HTML_CONTENT = """<!DOCTYPE html>
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>地方競馬 AI予想プロダッシュボード</title>
+    <title>地方競馬 AI予想ダッシュボード</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-slate-100 min-h-screen text-slate-800 antialiased pb-12">
+<body class="bg-slate-100 min-h-screen text-slate-800 antialiased pb-16">
     <header class="bg-slate-900 text-white py-4 border-b border-slate-700 shadow-sm sticky top-0 z-50">
         <div class="max-w-6xl mx-auto px-4 flex justify-between items-center">
             <div>
                 <h1 class="text-xl font-black tracking-wide text-emerald-400 flex items-center gap-2">
-                    <span>🏇</span> KEIBA-AI PRO ANALYTICS
+                    <span>🏇</span> KEIBA-AI PRO
                 </h1>
-                <p class="text-xs text-slate-400">地方競馬リアルタイム出馬表 & 期待値買い目最適化エンジン</p>
+                <p class="text-xs text-slate-400">リアルタイム出馬表解析 & 期待値最適化エンジン</p>
             </div>
             <div class="flex items-center gap-2">
                 <span class="text-xs bg-emerald-950 border border-emerald-500 text-emerald-300 px-3 py-1 rounded-full font-bold">
-                    NAR Auto Engine
+                    PRO Live
                 </span>
             </div>
         </div>
     </header>
 
-    <main class="max-w-6xl mx-auto px-4 py-6">
-        <!-- レース入力 & 条件設定フォーム -->
-        <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200 mb-6">
+    <main class="max-w-6xl mx-auto px-4 py-6 space-y-6">
+        <!-- URL & 馬場入力 -->
+        <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
             <h3 class="text-sm font-bold text-slate-700 mb-3 flex items-center gap-1.5">
                 <span>⚙️</span> 出馬表URL / レースID と 馬場条件の指定
             </h3>
@@ -45,7 +71,6 @@ HTML_CONTENT = """<!DOCTYPE html>
                            value="{current_url}"
                            class="flex-1 px-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
                     
-                    <!-- 馬場状態トグル -->
                     <select name="track_condition" class="px-3 py-2 border border-slate-300 rounded-lg text-sm bg-slate-50 font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500">
                         <option value="良" {selected_ryo}>馬場: 良 (標準)</option>
                         <option value="稍重" {selected_yaya}>馬場: 稍重 (+前残り)</option>
@@ -60,8 +85,8 @@ HTML_CONTENT = """<!DOCTYPE html>
             </form>
         </div>
 
-        <!-- レースサマリー & 買い目推奨 -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <!-- サマリー -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200 flex flex-col justify-between">
                 <div>
                     <div class="flex gap-2 items-center mb-1">
@@ -70,31 +95,48 @@ HTML_CONTENT = """<!DOCTYPE html>
                     </div>
                     <h2 class="text-2xl font-black text-slate-900 mt-1">{race_name}</h2>
                 </div>
-                <div class="mt-4 pt-3 border-t border-slate-100 text-xs text-slate-500">
-                    本命: <strong class="text-slate-800 text-sm font-bold">{honmei}</strong> / 妙味穴馬: <strong class="text-amber-700 text-sm font-bold">{ana_horses}</strong>
+                <div class="mt-4 pt-3 border-t border-slate-100 text-xs">
+                    本命: <strong class="text-slate-900 font-bold">{honmei}</strong><br>
+                    穴馬: <strong class="text-amber-700 font-bold">{ana_horses}</strong>
                 </div>
             </div>
 
-            <!-- 自動買い目推奨ボックス -->
+            <!-- 推奨買い目ボックス（単勝・馬連・ワイド・三連複・三連単） -->
             <div class="md:col-span-2 bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-5 shadow-sm">
-                <h3 class="font-extrabold text-amber-950 text-sm flex items-center gap-1.5 mb-2">
-                    <span>🎯</span> AI推奨 最適資金配分買い目 (期待値 EV>1.0 抽出)
-                </h3>
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="font-extrabold text-amber-950 text-sm flex items-center gap-1.5">
+                        <span>🎯</span> AI推奨 最適資金配分買い目
+                    </h3>
+                    <form method="post" action="/save-history" class="inline">
+                        <input type="hidden" name="race_name" value="{race_name}">
+                        <input type="hidden" name="venue_info" value="{venue_info}">
+                        <input type="hidden" name="honmei" value="{honmei}">
+                        <input type="hidden" name="ana" value="{ana_horses}">
+                        <input type="hidden" name="tansho_bet" value="{bet_tansho}">
+                        <input type="hidden" name="sanrenpuku_bet" value="{bet_sanrenpuku}">
+                        <input type="hidden" name="sanrentan_bet" value="{bet_sanrentan}">
+                        <input type="hidden" name="current_url" value="{current_url}">
+                        <button type="submit" class="bg-amber-600 hover:bg-amber-700 text-white font-bold px-3 py-1 rounded text-xs transition shadow-sm">
+                            💾 このレースを履歴に保存
+                        </button>
+                    </form>
+                </div>
                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                    <div class="bg-white/80 backdrop-blur rounded-lg p-3 border border-amber-200 shadow-sm">
-                        <div class="font-bold text-slate-600 mb-1">【単勝推奨】</div>
-                        <div class="text-amber-900 font-extrabold text-sm">{bet_tansho}</div>
-                        <p class="text-[11px] text-slate-500 mt-1">資金配分: 均等配分</p>
+                    <div class="bg-white/90 rounded-lg p-3 border border-amber-200 shadow-sm">
+                        <div class="font-bold text-slate-600 mb-1">【単勝 / 馬連】</div>
+                        <div class="text-amber-900 font-extrabold">{bet_tansho}</div>
+                        <div class="text-slate-700 mt-1">馬連: <strong class="font-bold">{bet_umaren}</strong></div>
                     </div>
-                    <div class="bg-white/80 backdrop-blur rounded-lg p-3 border border-amber-200 shadow-sm">
-                        <div class="font-bold text-slate-600 mb-1">【馬連 流し】</div>
-                        <div class="text-amber-900 font-extrabold text-sm">{bet_umaren}</div>
-                        <p class="text-[11px] text-slate-500 mt-1">資金配分: 60% / 25% / 15%</p>
+                    <div class="bg-white/90 rounded-lg p-3 border border-amber-200 shadow-sm">
+                        <div class="font-bold text-slate-600 mb-1">【ワイド / 三連複】</div>
+                        <div class="text-slate-700">ワイド: <strong class="font-bold">{bet_wide}</strong></div>
+                        <div class="text-amber-900 font-extrabold mt-1">三連複: {bet_sanrenpuku}</div>
+                        <p class="text-[11px] text-slate-500 mt-0.5">本命軸 相手流し</p>
                     </div>
-                    <div class="bg-white/80 backdrop-blur rounded-lg p-3 border border-amber-200 shadow-sm">
-                        <div class="font-bold text-slate-600 mb-1">【ワイド 妙味押さえ】</div>
-                        <div class="text-amber-900 font-extrabold text-sm">{bet_wide}</div>
-                        <p class="text-[11px] text-slate-500 mt-1">穴馬絡みの高EV回収狙い</p>
+                    <div class="bg-white/90 rounded-lg p-3 border border-amber-200 shadow-sm">
+                        <div class="font-bold text-slate-600 mb-1">【三連単フォーメーション】</div>
+                        <div class="text-amber-900 font-extrabold text-[11px] leading-tight">{bet_sanrentan}</div>
+                        <p class="text-[11px] text-slate-500 mt-1">EV重視の絞り込み</p>
                     </div>
                 </div>
             </div>
@@ -108,9 +150,9 @@ HTML_CONTENT = """<!DOCTYPE html>
                         <th class="py-3 px-3 text-center w-10">印</th>
                         <th class="py-3 px-3 text-center w-10">枠</th>
                         <th class="py-3 px-3 text-center w-10">馬番</th>
-                        <th class="py-3 px-4">馬名 / 前走情報</th>
+                        <th class="py-3 px-4">馬名 / 前走</th>
                         <th class="py-3 px-3">騎手 / 斤量</th>
-                        <th class="py-3 px-3 text-right">推定指数 (馬場補正済)</th>
+                        <th class="py-3 px-3 text-right">推定指数</th>
                         <th class="py-3 px-3 text-right">単勝オッズ</th>
                         <th class="py-3 px-3 text-right">予測勝率</th>
                         <th class="py-3 px-3 text-right">期待値 (EV)</th>
@@ -121,6 +163,49 @@ HTML_CONTENT = """<!DOCTYPE html>
                     {table_rows}
                 </tbody>
             </table>
+        </div>
+
+        <!-- 回収率シミュレーター & 保存済み履歴セクション -->
+        <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200 space-y-4">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-100 pb-3 gap-2">
+                <div>
+                    <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
+                        <span>📊</span> 保存済みレース履歴 & 回収率シミュレーター
+                    </h3>
+                    <p class="text-xs text-slate-500">保存したレースの結果（本命着順）を入力すると回収率をリアルタイム集計します</p>
+                </div>
+                <!-- シミュレーション集計バッジ -->
+                <div class="flex gap-2">
+                    <div class="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-1 text-center">
+                        <div class="text-[10px] text-emerald-600 font-bold">本命勝率</div>
+                        <div class="text-sm font-black text-emerald-700">{sim_win_rate}%</div>
+                    </div>
+                    <div class="bg-amber-50 border border-amber-200 rounded-lg px-3 py-1 text-center">
+                        <div class="text-[10px] text-amber-600 font-bold">本命単勝回収率</div>
+                        <div class="text-sm font-black text-amber-800">{sim_recovery_rate}%</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 履歴テーブル -->
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs whitespace-nowrap">
+                    <thead class="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+                        <tr>
+                            <th class="py-2 px-3">レース名</th>
+                            <th class="py-2 px-3">本命 / 穴馬</th>
+                            <th class="py-2 px-3">単勝推奨</th>
+                            <th class="py-2 px-3">三連複推奨</th>
+                            <th class="py-2 px-3">実際の結果入力</th>
+                            <th class="py-2 px-3">メモ</th>
+                            <th class="py-2 px-3 text-center">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100">
+                        {history_rows}
+                    </tbody>
+                </table>
+            </div>
         </div>
     </main>
 </body>
@@ -172,7 +257,6 @@ def parse_netkeiba_race(input_text: str):
             continue
 
         try:
-            # 馬番
             umaban_cell = row.find(class_=re.compile(r"Umaban|umaban"))
             if not umaban_cell:
                 nums = [td.text.strip() for td in tds if td.text.strip().isdigit()]
@@ -180,11 +264,9 @@ def parse_netkeiba_race(input_text: str):
             else:
                 umaban = int(re.search(r"\d+", umaban_cell.text).group())
 
-            # 枠番
             waku_cell = row.find(class_=re.compile(r"Waku|waku"))
             waku = waku_cell.text.strip() if waku_cell else "-"
 
-            # 馬名
             name_cell = row.find(class_=re.compile(r"HorseName|horse_name|bamei"))
             if not name_cell:
                 a_tag = row.find("a", href=re.compile(r"/horse/"))
@@ -192,12 +274,10 @@ def parse_netkeiba_race(input_text: str):
             else:
                 horse_name = name_cell.text.strip()
 
-            # 騎手名
             jockey_cell = row.find(class_=re.compile(r"Jockey|jockey|kishu"))
             jockey = jockey_cell.text.strip() if jockey_cell else "騎手"
             jockey = re.sub(r"[\r\n\t\s]+", " ", jockey)
 
-            # 斤量
             weight_cell = row.find(class_=re.compile(r"Weight|weight|kinryo"))
             burden_weight = 54.0
             if weight_cell:
@@ -205,7 +285,6 @@ def parse_netkeiba_race(input_text: str):
                 if w_match:
                     burden_weight = float(w_match.group(1))
 
-            # オッズ
             odds_cell = row.find(class_=re.compile(r"Popular|odds|ninki"))
             odds = 10.0
             if odds_cell:
@@ -215,7 +294,6 @@ def parse_netkeiba_race(input_text: str):
                     if val > 1.0:
                         odds = val
 
-            # 前走簡易データ（着順など）の抽出
             past_summary = "前走: データ集計中"
             past_cells = row.find_all(class_=re.compile(r"Past|past|Zen|Result"))
             if past_cells:
@@ -255,9 +333,6 @@ def get_default_nar_data():
 
 def apply_track_condition_bias(df: pd.DataFrame, condition: str):
     df["speed_idx"] = df["base_speed_idx"].copy()
-    
-    # 馬場状態ごとのバイアス補正
-    # 重・不良は内枠・先行有利の補正
     if condition in ["重", "不良"]:
         for idx, row in df.iterrows():
             waku = str(row.get("waku", "0"))
@@ -274,7 +349,6 @@ def apply_track_condition_bias(df: pd.DataFrame, condition: str):
 
 def evaluate_dataframe(df: pd.DataFrame, track_condition: str):
     df = apply_track_condition_bias(df, track_condition)
-
     scores = (
         (df["speed_idx"] - 75.0) * 0.55 
         - (df["burden_weight"] - 55.0) * 0.25 
@@ -291,10 +365,74 @@ def evaluate_dataframe(df: pd.DataFrame, track_condition: str):
     df["mark"] = marks[:len(df)]
     return df
 
+def get_history_and_simulation():
+    conn = sqlite3.connect("history.db")
+    cur = conn.cursor()
+    cur.execute("SELECT id, race_name, venue_info, honmei, ana, tansho_bet, sanrenpuku_bet, sanrentan_bet, result_rank, memo FROM race_history ORDER BY id DESC")
+    rows = cur.fetchall()
+    conn.close()
+
+    total_races = 0
+    wins = 0
+    total_spent = 0
+    total_return = 0
+
+    history_html = []
+    for r in rows:
+        r_id, r_name, v_info, h_mei, ana, t_bet, puku_bet, tan_bet, res_rank, memo = r
+        total_races += 1
+
+        # オッズ抽出（単勝計算用）
+        odds_match = re.search(r"(\d+(?:\.\d+)?)倍", t_bet)
+        odds_val = float(odds_match.group(1)) if odds_match else 2.0
+
+        if res_rank == "1着":
+            wins += 1
+            total_spent += 1000
+            total_return += int(1000 * odds_val)
+        elif res_rank in ["2着", "3着", "着外"]:
+            total_spent += 1000
+
+        history_html.append(f"""
+        <tr>
+            <td class="py-2.5 px-3 font-bold text-slate-800">{r_name}<br><span class="text-[10px] text-slate-400 font-normal">{v_info}</span></td>
+            <td class="py-2.5 px-3 font-bold text-emerald-700">{h_mei}<br><span class="text-amber-700 font-normal">穴: {ana}</span></td>
+            <td class="py-2.5 px-3">{t_bet}</td>
+            <td class="py-2.5 px-3 font-mono">{puku_bet}</td>
+            <td class="py-2.5 px-3">
+                <form method="post" action="/update-result" class="flex gap-1 items-center">
+                    <input type="hidden" name="race_id" value="{r_id}">
+                    <select name="result_rank" class="border border-slate-300 rounded px-1.5 py-0.5 text-xs bg-slate-50">
+                        <option value="" {"selected" if not res_rank else ""}>未確定</option>
+                        <option value="1着" {"selected" if res_rank=="1着" else ""}>1着 的中</option>
+                        <option value="2着" {"selected" if res_rank=="2着" else ""}>2着</option>
+                        <option value="3着" {"selected" if res_rank=="3着" else ""}>3着</option>
+                        <option value="着外" {"selected" if res_rank=="着外" else ""}>着外</option>
+                    </select>
+                    <button type="submit" class="bg-slate-700 text-white px-2 py-0.5 rounded text-[10px]">保存</button>
+                </form>
+            </td>
+            <td class="py-2.5 px-3 text-slate-500">{memo or '-'}</td>
+            <td class="py-2.5 px-3 text-center">
+                <form method="post" action="/delete-history" onsubmit="return confirm('削除しますか？');">
+                    <input type="hidden" name="race_id" value="{r_id}">
+                    <button type="submit" class="text-rose-500 hover:text-rose-700 font-bold text-[11px]">削除</button>
+                </form>
+            </td>
+        </tr>
+        """)
+
+    win_rate = round((wins / total_races * 100), 1) if total_races > 0 else 0.0
+    recovery_rate = round((total_return / total_spent * 100), 1) if total_spent > 0 else 0.0
+
+    if not history_html:
+        history_html = ['<tr><td colspan="7" class="text-center py-4 text-slate-400">まだ保存されたレースはありません。「このレースを履歴に保存」を押すと記録されます。</td></tr>']
+
+    return "".join(history_html), win_rate, recovery_rate
+
 def build_view(df: pd.DataFrame, race_name: str, venue_info: str, track_condition: str = "良", current_url: str = ""):
     df = evaluate_dataframe(df, track_condition)
 
-    # 買い目ロジックの構築
     honmei_row = df.iloc[0]
     honmei = f"({honmei_row['umaban']}) {honmei_row['horse_name']}"
     
@@ -302,19 +440,25 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, track_conditio
     ana_horses_list = [f"({r['umaban']}) {r['horse_name']}" for _, r in ana_df.iterrows() if r["horse_name"] != honmei_row["horse_name"]]
     ana_horses = ", ".join(ana_horses_list) if ana_horses_list else "該当なし"
 
-    # 単勝推奨
-    bet_tansho = f"馬番 {honmei_row['umaban']} (単勝 {honmei_row['odds']}倍)"
+    bet_tansho = f"馬番 {honmei_row['umaban']} ({honmei_row['odds']}倍)"
+    opponents = df.iloc[1:5]["umaban"].tolist()
+    bet_umaren = f"{honmei_row['umaban']} － {', '.join(map(str, opponents[:3]))}"
     
-    # 相手候補（印上位3頭）
-    opponents = df.iloc[1:4]["umaban"].tolist()
-    bet_umaren = f"{honmei_row['umaban']} － {', '.join(map(str, opponents))}"
-    
-    # ワイド（妙味馬との組み合わせ）
     if ana_horses_list:
         ana_top_umaban = ana_df.iloc[0]["umaban"]
-        bet_wide = f"{honmei_row['umaban']} － {ana_top_umaban} (超高回収狙い)"
+        bet_wide = f"{honmei_row['umaban']} － {ana_top_umaban}"
     else:
         bet_wide = f"{honmei_row['umaban']} － {opponents[0]}"
+
+    # 三連複（1頭軸 相手4頭流し = 6点）
+    bet_sanrenpuku = f"{honmei_row['umaban']} ＝ {', '.join(map(str, opponents[:4]))}"
+    
+    # 三連単（1着固定フォーメーション: 1着[◎] → 2着[◯▲] → 3着[◯▲△△]）
+    o1, o2 = opponents[0], opponents[1]
+    o_rest = opponents[2:4]
+    second_str = f"{o1},{o2}"
+    third_str = f"{o1},{o2},{','.join(map(str, o_rest))}"
+    bet_sanrentan = f"1着: [{honmei_row['umaban']}]<br>2着: [{second_str}]<br>3着: [{third_str}]"
 
     rows_html = []
     for _, row in df.sort_values(by="umaban").iterrows():
@@ -356,6 +500,8 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, track_conditio
         </tr>
         """)
 
+    history_rows, win_rate, recovery_rate = get_history_and_simulation()
+
     return HTML_CONTENT.format(
         table_rows="".join(rows_html),
         ana_horses=ana_horses,
@@ -363,6 +509,8 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, track_conditio
         bet_tansho=bet_tansho,
         bet_umaren=bet_umaren,
         bet_wide=bet_wide,
+        bet_sanrenpuku=bet_sanrenpuku,
+        bet_sanrentan=bet_sanrentan,
         race_name=race_name,
         venue_info=venue_info,
         track_condition=track_condition,
@@ -370,7 +518,10 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, track_conditio
         selected_yaya="selected" if track_condition == "稍重" else "",
         selected_zyu="selected" if track_condition == "重" else "",
         selected_furyo="selected" if track_condition == "不良" else "",
-        current_url=current_url
+        current_url=current_url,
+        history_rows=history_rows,
+        sim_win_rate=win_rate,
+        sim_recovery_rate=recovery_rate
     )
 
 @app.get("/", response_class=HTMLResponse)
@@ -389,3 +540,42 @@ def fetch_race(race_url: str = Form(...), track_condition: str = Form("良")):
         df, race_name, venue_info = get_default_nar_data()
         race_name = f"【取得エラー: サンプル表示中】{race_name}"
     return build_view(df, race_name, venue_info, track_condition=track_condition, current_url=race_url)
+
+@app.post("/save-history")
+def save_history(
+    race_name: str = Form(...),
+    venue_info: str = Form(...),
+    honmei: str = Form(...),
+    ana: str = Form(...),
+    tansho_bet: str = Form(...),
+    sanrenpuku_bet: str = Form(...),
+    sanrentan_bet: str = Form(...),
+    current_url: str = Form("")
+):
+    conn = sqlite3.connect("history.db")
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO race_history (race_name, venue_info, honmei, ana, tansho_bet, sanrenpuku_bet, sanrentan_bet)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (race_name, venue_info, honmei, ana, tansho_bet, sanrenpuku_bet, sanrentan_bet))
+    conn.commit()
+    conn.close()
+    return RedirectResponse(url="/", status_code=303)
+
+@app.post("/update-result")
+def update_result(race_id: int = Form(...), result_rank: str = Form(...)):
+    conn = sqlite3.connect("history.db")
+    cur = conn.cursor()
+    cur.execute("UPDATE race_history SET result_rank = ? WHERE id = ?", (result_rank, race_id))
+    conn.commit()
+    conn.close()
+    return RedirectResponse(url="/", status_code=303)
+
+@app.post("/delete-history")
+def delete_history(race_id: int = Form(...)):
+    conn = sqlite3.connect("history.db")
+    cur = conn.cursor()
+    cur.execute("DELETE FROM race_history WHERE id = ?", (race_id,))
+    conn.commit()
+    conn.close()
+    return RedirectResponse(url="/", status_code=303)

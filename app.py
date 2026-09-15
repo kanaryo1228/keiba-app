@@ -67,7 +67,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 <h1 class="text-xl font-black tracking-wide text-emerald-400 flex items-center gap-2">
                     <span>🏇</span> KEIBA-AI PRO
                 </h1>
-                <p class="text-xs text-slate-400">当日結果バイアス自動学習 & パドック直前解析エンジン</p>
+                <p class="text-xs text-slate-400">適正EV正規化 & 厳選妙味穴馬抽出エンジン</p>
             </div>
             <div class="flex items-center gap-3">
                 <label class="flex items-center gap-1 text-xs text-slate-300 font-bold cursor-pointer">
@@ -101,10 +101,10 @@ HTML_CONTENT = """<!DOCTYPE html>
                 </div>
                 <div class="flex justify-between items-center pt-1">
                     <div class="text-[11px] text-slate-500">
-                        ※同日1R〜直前Rの結果・通過順から「本日のリアルタイム・トラックバイアス」を完全自動算出
+                        ※控除率20%補正＋能力上位条件により、実力に見合わない「見かけ倒しの穴馬」を徹底排除
                     </div>
                     <button type="submit" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-6 py-2 rounded-lg text-sm transition shadow-sm flex items-center gap-1">
-                        <span>⚡️</span> 当日バイアス＋パドックAI解析
+                        <span>⚡️</span> AI厳選解析実行
                     </button>
                 </div>
             </form>
@@ -147,7 +147,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 </div>
                 <div class="mt-4 pt-3 border-t border-slate-100 text-xs space-y-1">
                     <div>能力本命: <strong class="text-slate-900 font-bold text-sm">{honmei}</strong></div>
-                    <div>オッズ妙味馬: <strong class="text-amber-700 font-bold">{ana_horses}</strong></div>
+                    <div>厳選穴馬: <strong class="text-amber-700 font-bold">{ana_horses}</strong></div>
                 </div>
             </div>
 
@@ -200,12 +200,12 @@ HTML_CONTENT = """<!DOCTYPE html>
                         <th class="py-3 px-4">馬名 / 前走情報</th>
                         <th class="py-3 px-3">騎手 / 斤量</th>
                         <th class="py-3 px-3 text-center">パドック気配</th>
-                        <th class="py-3 px-3 text-center">自動補正</th>
+                        <th class="py-3 px-3 text-center">補正タグ</th>
                         <th class="py-3 px-3 text-right">実質能力</th>
                         <th class="py-3 px-3 text-right">オッズ</th>
-                        <th class="py-3 px-3 text-right">勝率</th>
-                        <th class="py-3 px-3 text-right">期待値</th>
-                        <th class="py-3 px-4 text-center">判定</th>
+                        <th class="py-3 px-3 text-right">実質勝率</th>
+                        <th class="py-3 px-3 text-right">期待値 (EV)</th>
+                        <th class="py-3 px-4 text-center">AI判定</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-100">
@@ -221,7 +221,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                     <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
                         <span>📊</span> 収支履歴シミュレーター
                     </h3>
-                    <p class="text-xs text-slate-500">当日バイアス＋パドック補正の累積的中率・回収率</p>
+                    <p class="text-xs text-slate-500">厳選買い目の的中率・回収率を集計します</p>
                 </div>
                 <div class="flex items-center gap-2">
                     <a href="/export-csv" class="bg-slate-700 hover:bg-slate-800 text-white font-bold px-3 py-1.5 rounded-lg text-xs transition flex items-center gap-1 shadow-sm">
@@ -262,7 +262,6 @@ HTML_CONTENT = """<!DOCTYPE html>
 """
 
 def crawl_today_bias(race_id_str: str):
-    # レースID (例: 202444091311 -> 12桁) から同日の前半レースをスクレイピング
     if not race_id_str or len(race_id_str) != 12:
         return {
             "race_count": 0,
@@ -286,7 +285,6 @@ def crawl_today_bias(race_id_str: str):
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
-    # 1Rから対象直前レースまで走査（最大過去6レース）
     start_r = max(1, current_race_num - 6)
     for r_num in range(start_r, current_race_num):
         target_id = f"{base_id}{r_num:02d}"
@@ -313,13 +311,11 @@ def crawl_today_bias(race_id_str: str):
                     rank_found += 1
                     total_top3_count += 1
                     
-                    # 枠判定 (1~3枠が内枠)
                     waku_cell = row.find(class_=re.compile(r"Waku|waku"))
                     if waku_cell and waku_cell.text.strip().isdigit():
                         if int(waku_cell.text.strip()) in [1, 2, 3]:
                             inner_top3_count += 1
                     
-                    # 通過順判定
                     corner_cell = row.find(class_=re.compile(r"Pass|Corner|corner"))
                     if corner_cell:
                         c_text = corner_cell.text.strip()
@@ -461,7 +457,6 @@ def parse_netkeiba_race(input_text: str):
                     if val > 1.0:
                         odds = val
 
-            # パドック・馬体重解析
             paddock_sign = "良好"
             paddock_score = 0.0
             horse_weight_text = "-"
@@ -482,7 +477,6 @@ def parse_netkeiba_race(input_text: str):
                         paddock_score = +1.0
                     break
 
-            # 脚質推定
             running_style = "自在"
             past_cells = row.find_all(class_=re.compile(r"Past|past|Zen|Result"))
             past_summary = "前走: データ集計中"
@@ -554,7 +548,6 @@ def apply_dynamic_learning_bias(df: pd.DataFrame, bias_data: dict):
         bonus = 0.0
         tags = []
 
-        # 1. 当日リアルタイム・トラックバイアス加算
         waku = str(row.get("waku", "0"))
         if waku in ["1", "2", "3"]:
             bonus += bias_data["inner_bonus"]
@@ -570,7 +563,6 @@ def apply_dynamic_learning_bias(df: pd.DataFrame, bias_data: dict):
             if bias_data["front_bonus"] >= 2.0:
                 tags.append("本日前利")
 
-        # 2. パドック気配スコア
         p_score = row.get("paddock_score", 0.0)
         bonus += p_score
         if p_score >= 1.0:
@@ -578,7 +570,6 @@ def apply_dynamic_learning_bias(df: pd.DataFrame, bias_data: dict):
         elif p_score <= -2.0:
             tags.append(row.get("paddock_sign", "気配割"))
 
-        # 3. トップ騎手ボーナス
         jockey = str(row.get("jockey", ""))
         for top_j in TOP_JOCKEYS:
             if top_j in jockey:
@@ -594,31 +585,36 @@ def apply_dynamic_learning_bias(df: pd.DataFrame, bias_data: dict):
 def evaluate_dataframe(df: pd.DataFrame, strategy: str, bias_data: dict):
     df = apply_dynamic_learning_bias(df, bias_data)
 
+    # 控除率アンカー（地方単勝控除率 20% を前提に市場オッズと能力のバランスを正規化）
     if strategy == "safe":
+        scores = (
+            (df["speed_idx"] - 75.0) * 0.80 
+            - (df["burden_weight"] - 55.0) * 0.25 
+            - np.log(df["odds"]) * 0.60
+        ).to_numpy()
+        scaled = scores / 1.4
+    elif strategy == "aggressive":
+        scores = (
+            (df["speed_idx"] - 75.0) * 0.70 
+            - (df["burden_weight"] - 55.0) * 0.20 
+            - np.log(df["odds"]) * 0.25
+        ).to_numpy()
+        scaled = scores / 1.6
+    else:
+        # バランス
         scores = (
             (df["speed_idx"] - 75.0) * 0.75 
             - (df["burden_weight"] - 55.0) * 0.25 
-            - np.log(df["odds"]) * 0.35
+            - np.log(df["odds"]) * 0.40
         ).to_numpy()
         scaled = scores / 1.5
-    elif strategy == "aggressive":
-        scores = (
-            (df["speed_idx"] - 75.0) * 0.65 
-            - (df["burden_weight"] - 55.0) * 0.20 
-            + np.log(np.clip(df["odds"], 1.0, 30.0)) * 0.35
-        ).to_numpy()
-        scaled = scores / 1.8
-    else:
-        scores = (
-            (df["speed_idx"] - 75.0) * 0.70 
-            - (df["burden_weight"] - 55.0) * 0.25 
-            - np.log(df["odds"]) * 0.15
-        ).to_numpy()
-        scaled = scores / 1.6
 
     exps = np.exp(scaled - np.max(scaled))
-    df["win_prob"] = exps / np.sum(exps)
-    df["ev"] = df["win_prob"] * df["odds"]
+    raw_win_prob = exps / np.sum(exps)
+    
+    # 地方競馬の控除率0.80を乗算して市場の適正EVにアンカー
+    df["win_prob"] = raw_win_prob
+    df["ev"] = df["win_prob"] * df["odds"] * 0.80
 
     df = df.sort_values(by="win_prob", ascending=False).reset_index(drop=True)
     marks = ["◎", "◯", "▲", "△", "△"] + [""] * max(0, len(df) - 5)
@@ -671,7 +667,7 @@ def get_history_and_simulation():
                         <option value="1着的中" {"selected" if res_rank=="1着的中" else ""}>🎯 1着的中</option>
                         <option value="複勝的中" {"selected" if res_rank=="複勝的中" else ""}>✅ 複勝的中</option>
                         <option value="ワイド的中" {"selected" if res_rank=="ワイド的中" else ""}>✅ ワイド的中</option>
-                        <option value="不的中" {"selected" if res_rank=="不的中" else ""}>❌ 不的中</option>
+                        <option value="不的中" {"selected" if res_rank=="不討中" else ""}>❌ 不的中</option>
                     </select>
                     <button type="submit" class="bg-slate-700 text-white px-2 py-0.5 rounded text-[10px]">反映</button>
                 </form>
@@ -699,10 +695,30 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
 
     honmei_row = df.iloc[0]
     honmei = f"({honmei_row['umaban']}) {honmei_row['horse_name']}"
-    
-    ana_df = df[(df["ev"] >= 1.10) & (df["odds"] >= 6.0)]
-    ana_horses_list = [f"({r['umaban']}) {r['horse_name']}" for _, r in ana_df.iterrows() if r["horse_name"] != honmei_row["horse_name"]]
-    ana_horses = ", ".join(ana_horses_list) if ana_horses_list else "指数上位拮抗"
+
+    # 厳格な妙味穴馬フィルター:
+    # 1. オッズ 6.0倍以上 45.0倍以下
+    # 2. 勝率が 5.5% 以上ある
+    # 3. 控除率後EVが 0.95 以上 (一般的な馬は0.70〜0.80程度)
+    # 4. 指数上位（全体の上位55%以内）
+    speed_threshold = df["speed_idx"].median()
+    ana_candidate_df = df[
+        (df["odds"] >= 6.0) & 
+        (df["odds"] <= 45.0) & 
+        (df["win_prob"] >= 0.055) & 
+        (df["ev"] >= 0.95) & 
+        (df["speed_idx"] >= speed_threshold) &
+        (df["umaban"] != honmei_row["umaban"])
+    ].sort_values(by="ev", ascending=False)
+
+    # 1レース最大1〜2頭に限定
+    ana_top_list = ana_candidate_df.head(2)
+    if len(ana_top_list) > 0:
+        ana_horses = ", ".join([f"({r['umaban']}) {r['horse_name']}" for _, r in ana_top_list.iterrows()])
+        ana_top_umaban = ana_top_list.iloc[0]["umaban"]
+    else:
+        ana_horses = "該当なし (オッズ相応)"
+        ana_top_umaban = None
 
     opponents = df.iloc[1:5]["umaban"].tolist()
 
@@ -718,13 +734,13 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
     elif strategy == "aggressive":
         strategy_title = "配当重視"
         strategy_badge = "🔥 配当重視"
-        ana_target = ana_df.iloc[0] if len(ana_df) > 0 else df.iloc[1]
+        ana_target = ana_top_list.iloc[0] if len(ana_top_list) > 0 else df.iloc[1]
         bet_primary = f"単勝/複勝: 馬番 {ana_target['umaban']} ({ana_target['odds']}倍)"
-        bet_primary_sub = "本日馬場バイアス×パドック好気配の盲点穴馬"
+        bet_primary_sub = "期待値・能力が市場オッズを上回る唯一の厳選穴馬"
         bet_secondary = f"ワイド: {honmei_row['umaban']} ＝ {ana_target['umaban']}"
         bet_sanrenpuku = f"{ana_target['umaban']} ＝ {honmei_row['umaban']} ＝ {opponents[0]}, {opponents[1]}"
         bet_sanrentan = f"1着: [{ana_target['umaban']}]<br>2着: [{honmei_row['umaban']},{opponents[0]}]<br>3着: [{honmei_row['umaban']},{','.join(map(str, opponents[:3]))}]"
-        bet_note = "展開逆転の妙味フォーメーション"
+        bet_note = "妙味穴頭のピンポイント狙い"
     else:
         strategy_title = "バランス"
         strategy_badge = "⚖️ バランス"
@@ -736,27 +752,32 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
         bet_sanrentan = f"1着: [{honmei_row['umaban']}]<br>2着: [{o1},{o2}]<br>3着: [{o1},{o2},{','.join(map(str, opponents[2:4]))}]"
         bet_note = "能力指数上位フォーメーション"
 
+    ana_umaban_set = set(ana_top_list["umaban"].tolist()) if len(ana_top_list) > 0 else set()
+
     rows_html = []
     for _, row in df.sort_values(by="umaban").iterrows():
         ev = row["ev"]
         odds = row["odds"]
         prob = row["win_prob"]
+        u_num = row["umaban"]
 
         badge_class = ""
-        if ev >= 1.15 and odds >= 7.0:
-            badge = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-amber-500 text-white shadow-sm">★ 妙味穴馬</span>'
-            badge_class = 'bg-amber-50/40'
-        elif prob >= 0.20:
+        # バッジ判定の適正化
+        if u_num in ana_umaban_set:
+            badge = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-black bg-amber-500 text-white shadow-sm">★ 厳選妙味穴馬</span>'
+            badge_class = 'bg-amber-50/50'
+        elif u_num == honmei_row["umaban"]:
             badge = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-600 text-white shadow-sm">◎ 能力本命</span>'
-        elif odds <= 3.5 and prob < 0.15:
+        elif odds <= 3.5 and prob < 0.16:
             badge = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-rose-100 text-rose-700 border border-rose-200">▲ 危険人気</span>'
+        elif ev >= 0.85 and odds >= 5.0:
+            badge = '<span class="text-xs text-slate-500 font-bold">△ 抑え</span>'
         else:
-            badge = '<span class="text-xs text-slate-400 font-mono">―</span>'
+            badge = '<span class="text-xs text-slate-300 font-mono">―</span>'
 
-        ev_color = "text-amber-600" if ev >= 1.15 else ("text-emerald-600" if ev >= 1.0 else "text-slate-400")
+        ev_color = "text-amber-600 font-black" if u_num in ana_umaban_set else ("text-emerald-600 font-bold" if ev >= 0.85 else "text-slate-400")
         mark_color = "text-rose-600" if row["mark"] == "◎" else ("text-blue-600" if row["mark"] == "◯" else "text-amber-600")
 
-        # パドックバッジ
         p_sign = row.get("paddock_sign", "-")
         if "良" in p_sign:
             paddock_badge = f'<span class="bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-bold px-1.5 py-0.5 rounded">{row.get("horse_weight_text", "-")}<br>{p_sign}</span>'
@@ -788,7 +809,7 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
             <td class="py-3 px-3 text-right font-mono text-slate-800 font-bold text-base">{row["speed_idx"]:.1f}</td>
             <td class="py-3 px-3 text-right font-mono font-bold">{row["odds"]:.1f}倍</td>
             <td class="py-3 px-3 text-right font-mono text-slate-700">{row["win_prob"]*100:.1f}%</td>
-            <td class="py-3 px-3 text-right font-mono font-bold text-base {ev_color}">{ev:.2f}</td>
+            <td class="py-3 px-3 text-right font-mono text-base {ev_color}">{ev:.2f}</td>
             <td class="py-3 px-4 text-center">{badge}</td>
         </tr>
         """)

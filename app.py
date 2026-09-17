@@ -179,7 +179,12 @@ HTML_CONTENT = """<!DOCTYPE html>
     <header class="bg-slate-900 text-white py-3 border-b border-slate-700 shadow-sm sticky top-0 z-50">
         <div class="max-w-6xl mx-auto px-4 flex justify-between items-center">
             <div>
-                <h1 class="text-xl font-black tracking-wide text-emerald-400 flex items-center gap-2">
+                <div class="flex items-center gap-2">
+                    <h1 class="text-xl font-black tracking-wide text-emerald-400 flex items-center gap-2">
+                        <span>🏇</span> KEIBA-AI PRO
+                    </h1>
+                    <span class="bg-emerald-500/20 border border-emerald-400 text-emerald-300 text-[10px] font-black px-1.5 py-0.5 rounded">v2.0</span>
+                </div>
                     <span>🏇</span> KEIBA-AI PRO MAX
                 </h1>
                 <p class="text-xs text-slate-400">競馬場別マルチモデル自律学習 & 独自指数関数エンジン</p>

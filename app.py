@@ -67,7 +67,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 <h1 class="text-xl font-black tracking-wide text-emerald-400 flex items-center gap-2">
                     <span>🏇</span> KEIBA-AI PRO MAX
                 </h1>
-                <p class="text-xs text-slate-400">ハナ奪取指数 & 勝負気配（鞍上強化） & 斤量体重比エンジン</p>
+                <p class="text-xs text-slate-400">ハナ奪取指数 & 勝負気配 & トラックバイアスエンジン</p>
             </div>
             <div class="flex items-center gap-3">
                 <label class="flex items-center gap-1 text-xs text-slate-300 font-bold cursor-pointer">
@@ -82,7 +82,6 @@ HTML_CONTENT = """<!DOCTYPE html>
     </header>
 
     <main class="max-w-6xl mx-auto px-4 py-6 space-y-6">
-        <!-- 入力エリア -->
         <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
             <h3 class="text-sm font-bold text-slate-700 mb-3 flex items-center gap-1.5">
                 <span>⚙️</span> レースURL / ID と 予想戦略
@@ -101,7 +100,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 </div>
                 <div class="flex justify-between items-center pt-1">
                     <div class="text-[11px] text-slate-500">
-                        ※ハナ奪取指数、乗り替わり勝負気配、斤量比率、トラックバイアスを完全自動演算
+                        ※レースID入力で同日前半レースのバイアス・馬体重・ハナ奪取度を完全解析
                     </div>
                     <button type="submit" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-6 py-2 rounded-lg text-sm transition shadow-sm flex items-center gap-1">
                         <span>⚡️</span> AI最先端解析実行
@@ -110,12 +109,11 @@ HTML_CONTENT = """<!DOCTYPE html>
             </form>
         </div>
 
-        <!-- 当日トラックバイアス集計カード -->
         <div class="bg-gradient-to-r from-slate-900 to-slate-800 text-white rounded-xl p-4 shadow-sm border border-slate-700">
             <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
                 <div>
                     <div class="flex items-center gap-2 mb-1">
-                        <span class="text-[10px] bg-emerald-500 text-slate-950 font-black px-2 py-0.5 rounded">本日リアルタイム集計</span>
+                        <span class="text-[10px] bg-emerald-500 text-slate-950 font-black px-2 py-0.5 rounded">本日バイアス判定</span>
                         <span class="text-xs font-bold text-slate-300">{bias_race_count_text}</span>
                     </div>
                     <h3 class="text-lg font-black text-white">{bias_summary_headline}</h3>
@@ -134,7 +132,6 @@ HTML_CONTENT = """<!DOCTYPE html>
             </div>
         </div>
 
-        <!-- サマリー & 買い目 -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200 flex flex-col justify-between">
                 <div>
@@ -151,7 +148,6 @@ HTML_CONTENT = """<!DOCTYPE html>
                 </div>
             </div>
 
-            <!-- 推奨買い目ボックス -->
             <div class="md:col-span-2 bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-5 shadow-sm">
                 <div class="flex justify-between items-center mb-2">
                     <h3 class="font-extrabold text-amber-950 text-sm flex items-center gap-1.5">
@@ -189,7 +185,6 @@ HTML_CONTENT = """<!DOCTYPE html>
             </div>
         </div>
 
-        <!-- 出走表テーブル -->
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
             <table class="w-full text-left text-sm whitespace-nowrap">
                 <thead class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
@@ -215,14 +210,13 @@ HTML_CONTENT = """<!DOCTYPE html>
             </table>
         </div>
 
-        <!-- 履歴 & シミュレーター -->
         <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200 space-y-4">
             <div class="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-100 pb-3 gap-2">
                 <div>
                     <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
                         <span>📊</span> 収支履歴シミュレーター
                     </h3>
-                    <p class="text-xs text-slate-500">ハナ奪取＋勝負気配の厳選回収率を集計中</p>
+                    <p class="text-xs text-slate-500">保存した推奨馬券の累積勝率・回収率</p>
                 </div>
                 <div class="flex items-center gap-2">
                     <a href="/export-csv" class="bg-slate-700 hover:bg-slate-800 text-white font-bold px-3 py-1.5 rounded-lg text-xs transition flex items-center gap-1 shadow-sm">
@@ -268,8 +262,8 @@ def crawl_today_bias(race_id_str: str):
             "race_count": 0,
             "inner_rate": 45.0,
             "front_rate": 60.0,
-            "headline": "コース基準バイアス稼働中",
-            "detail": "レースIDから前半レースの結果を取得中（または第1レースのため基準値適用）",
+            "headline": "コース標準バイアス適用中",
+            "detail": "レースIDを指定すると同日前半レースの結果から自動算出されます",
             "inner_bonus": 1.0,
             "front_bonus": 1.5
         }
@@ -286,12 +280,12 @@ def crawl_today_bias(race_id_str: str):
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
-    start_r = max(1, current_race_num - 6)
+    start_r = max(1, current_race_num - 5)
     for r_num in range(start_r, current_race_num):
         target_id = f"{base_id}{r_num:02d}"
         url = f"https://nar.netkeiba.com/race/result.html?race_id={target_id}"
         try:
-            res = requests.get(url, headers=headers, timeout=4)
+            res = requests.get(url, headers=headers, timeout=2.5)
             if res.status_code != 200:
                 continue
             res.encoding = res.apparent_encoding or "utf-8"
@@ -335,7 +329,7 @@ def crawl_today_bias(race_id_str: str):
             "inner_rate": 42.0,
             "front_rate": 58.0,
             "headline": "基準トラックバイアス適用中",
-            "detail": "本日前半レースの確定前、または第1Rのためダート標準バイアスを自動セットしています。",
+            "detail": "本日前半レースの確定前、または第1Rのため標準バイアスをセットしています。",
             "inner_bonus": 0.8,
             "front_bonus": 1.2
         }
@@ -343,35 +337,18 @@ def crawl_today_bias(race_id_str: str):
     inner_rate = round(inner_top3_count / total_top3_count * 100, 1)
     front_rate = round(front_top3_count / total_top3_count * 100, 1)
 
-    inner_bonus = 0.0
-    front_bonus = 0.0
+    inner_bonus = 2.5 if inner_rate >= 55.0 else (-1.5 if inner_rate <= 25.0 else 0.5)
+    w_text = "極端な内枠天国" if inner_rate >= 55.0 else ("外枠有利・外差し傾向" if inner_rate <= 25.0 else "内外フラット")
 
-    if inner_rate >= 55.0:
-        inner_bonus = 2.5
-        w_text = "極端な内枠天国"
-    elif inner_rate <= 25.0:
-        inner_bonus = -1.5
-        w_text = "外枠有利・外差し傾向"
-    else:
-        inner_bonus = 0.5
-        w_text = "内外フラット"
-
-    if front_rate >= 65.0:
-        front_bonus = 2.8
-        p_text = "前残り・逃げ先行超有利"
-    elif front_rate <= 35.0:
-        front_bonus = -1.5
-        p_text = "外差し・追込決着優勢"
-    else:
-        front_bonus = 1.0
-        p_text = "先行標準有利"
+    front_bonus = 2.8 if front_rate >= 65.0 else (-1.5 if front_rate <= 35.0 else 1.0)
+    p_text = "前残り・逃げ先行超有利" if front_rate >= 65.0 else ("外差し・追込決着優勢" if front_rate <= 35.0 else "先行標準有利")
 
     return {
         "race_count": analyzed_races,
         "inner_rate": inner_rate,
         "front_rate": front_rate,
         "headline": f"本日傾向: 【{w_text}】×【{p_text}】",
-        "detail": f"同日直前{analyzed_races}レースの馬券内データから算出。本日3着以内の内枠率は{inner_rate}%、先行通過率は{front_rate}%です。",
+        "detail": f"直前{analyzed_races}Rのデータから集計。内枠率{inner_rate}%、先行通過率{front_rate}%。",
         "inner_bonus": inner_bonus,
         "front_bonus": front_bonus
     }
@@ -390,7 +367,7 @@ def parse_netkeiba_race(input_text: str):
     }
     
     try:
-        resp = requests.get(target_url, headers=headers, timeout=10)
+        resp = requests.get(target_url, headers=headers, timeout=6)
         resp.encoding = resp.apparent_encoding or "utf-8"
         soup = BeautifulSoup(resp.text, "html.parser")
     except Exception:
@@ -480,9 +457,8 @@ def parse_netkeiba_race(input_text: str):
                         paddock_score = +1.0
                     break
 
-            # 脚質 & ハナ奪取度 & 鞍上乗り替わり解析
             running_style = "自在"
-            hana_score = 40  # 基準
+            hana_score = 40
             past_jockey = ""
             past_cells = row.find_all(class_=re.compile(r"Past|past|Zen|Result"))
             past_summary = "前走: データ集計中"
@@ -493,7 +469,6 @@ def parse_netkeiba_race(input_text: str):
                 if rank_m:
                     past_summary = f"前走: {rank_m.group(1)}着"
                 
-                # 前走通過順 (例: 1-1-1)
                 corner_m = re.search(r"(\d{1,2})-(\d{1,2})", past_text)
                 if corner_m:
                     first_pos = int(corner_m.group(1))
@@ -510,17 +485,14 @@ def parse_netkeiba_race(input_text: str):
                         running_style = "差し"
                         hana_score = 30
 
-                # 前走騎手の抽出
                 for tj in TOP_JOCKEYS:
                     if tj in past_text:
                         past_jockey = tj
                         break
 
-            # 内枠加算（1~2枠ならハナ奪取確率上昇）
             if waku in ["1", "2"]:
                 hana_score += 10
 
-            # 鞍上強化判定
             is_jockey_upgrade = False
             current_is_top = any(tj in jockey for tj in TOP_JOCKEYS)
             if current_is_top and (not past_jockey or past_jockey not in TOP_JOCKEYS):
@@ -578,7 +550,6 @@ def apply_dynamic_learning_bias(df: pd.DataFrame, bias_data: dict):
         bonus = 0.0
         tags = []
 
-        # 1. ハナ奪取ボーナス (地方ダート最大の勝因)
         h_score = row.get("hana_score", 40)
         if h_score >= 80:
             bonus += 2.4
@@ -587,12 +558,10 @@ def apply_dynamic_learning_bias(df: pd.DataFrame, bias_data: dict):
             bonus += 1.2
             tags.append("好位先行")
 
-        # 2. 鞍上強化（勝負気配フラグ）
         if row.get("is_jockey_upgrade", False):
             bonus += 2.0
             tags.append("勝負鞍上")
 
-        # 3. 斤量体重比ペナルティ (斤量 / 馬体重 > 0.125 なら減算)
         b_wt = row.get("horse_body_weight", 480)
         k_wt = row.get("burden_weight", 54.0)
         if b_wt > 0:
@@ -601,7 +570,6 @@ def apply_dynamic_learning_bias(df: pd.DataFrame, bias_data: dict):
                 bonus -= 1.8
                 tags.append("斤量酷")
 
-        # 4. 当日リアルタイム・トラックバイアス加算
         waku = str(row.get("waku", "0"))
         if waku in ["1", "2", "3"]:
             bonus += bias_data["inner_bonus"]
@@ -617,7 +585,6 @@ def apply_dynamic_learning_bias(df: pd.DataFrame, bias_data: dict):
             if bias_data["front_bonus"] >= 2.0:
                 tags.append("本日前利")
 
-        # 5. パドック気配スコア
         p_score = row.get("paddock_score", 0.0)
         bonus += p_score
         if p_score >= 1.0:
@@ -735,13 +702,25 @@ def get_history_and_simulation():
     return "".join(history_html), win_rate, recovery_rate
 
 def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: str = "", strategy: str = "balanced", current_url: str = ""):
-    bias_data = crawl_today_bias(race_id_str)
+    # 初期トップ画面（空）のときは外部通信をスキップして即座に初期画面を表示
+    if not current_url and not race_id_str:
+        bias_data = {
+            "race_count": 0,
+            "inner_rate": 45.0,
+            "front_rate": 60.0,
+            "headline": "コース標準バイアス待機中",
+            "detail": "出馬表URLまたはレースIDを入力して「AI解析実行」を押してください",
+            "inner_bonus": 1.0,
+            "front_bonus": 1.5
+        }
+    else:
+        bias_data = crawl_today_bias(race_id_str)
+
     df = evaluate_dataframe(df, strategy, bias_data)
 
     honmei_row = df.iloc[0]
     honmei = f"({honmei_row['umaban']}) {honmei_row['horse_name']}"
 
-    # 厳格な妙味穴馬抽出
     speed_threshold = df["speed_idx"].median()
     ana_candidate_df = df[
         (df["odds"] >= 6.0) & 
@@ -815,7 +794,6 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
         ev_color = "text-amber-600 font-black" if u_num in ana_umaban_set else ("text-emerald-600 font-bold" if ev >= 0.85 else "text-slate-400")
         mark_color = "text-rose-600" if row["mark"] == "◎" else ("text-blue-600" if row["mark"] == "◯" else "text-amber-600")
 
-        # ハナ奪取メーター
         h_score = row.get("hana_score", 40)
         h_color = "text-emerald-600 font-black" if h_score >= 80 else ("text-slate-700 font-bold" if h_score >= 60 else "text-slate-400")
 
@@ -870,12 +848,12 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
         bet_note=bet_note,
         race_name=race_name,
         venue_info=venue_info,
-        bias_race_count_text=f"直前{bias_data['race_count']}R解析済" if bias_data['race_count'] > 0 else "初期基準値",
+        bias_race_count_text=f"直前{bias_data['race_count']}R解析済" if bias_data['race_count'] > 0 else "初期待機中",
         bias_summary_headline=bias_data["headline"],
         bias_detail_text=bias_data["detail"],
         inner_waku_rate=bias_data["inner_rate"],
         front_rate=bias_data["front_rate"],
-        pace_analysis_comment="ハナ奪取度＋鞍上乗り替わり＋当日トラックバイアスを合算演算中",
+        pace_analysis_comment="出走表入力でリアルタイム解析が実行されます",
         strategy_title=strategy_title,
         strategy_badge=strategy_badge,
         sel_strat_bal="selected" if strategy == "balanced" else "",
@@ -890,13 +868,13 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
 @app.get("/", response_class=HTMLResponse)
 def index():
     df, race_name, venue_info, race_id_str = get_default_nar_data()
-    return build_view(df, race_name, venue_info, race_id_str=race_id_str)
+    return build_view(df, race_name, venue_info, race_id_str="")
 
 @app.post("/fetch", response_class=HTMLResponse)
 def fetch_race(race_url: str = Form(...), strategy: str = Form("balanced")):
     if not race_url.strip():
         df, race_name, venue_info, race_id_str = get_default_nar_data()
-        return build_view(df, race_name, venue_info, race_id_str=race_id_str, strategy=strategy)
+        return build_view(df, race_name, venue_info, race_id_str="", strategy=strategy)
     
     df, race_name, venue_info, race_id_str = parse_netkeiba_race(race_url.strip())
     if df is None:

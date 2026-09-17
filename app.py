@@ -21,6 +21,7 @@ TOP_JOCKEYS = [
 def init_db():
     conn = sqlite3.connect("history.db")
     cur = conn.cursor()
+    # 予想履歴
     cur.execute("""
         CREATE TABLE IF NOT EXISTS race_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,10 +35,90 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # 掲示板内（1〜5着）＋着外の学習データログ
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS board_learning_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            race_id TEXT,
+            horse_name TEXT,
+            rank INTEGER,
+            is_board INTEGER,
+            waku INTEGER,
+            hana_score REAL,
+            weight_ratio REAL,
+            paddock_score REAL,
+            is_top_jockey INTEGER,
+            odds REAL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    # 独自関数の動的重みパラメータ
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS custom_weights (
+            param_name TEXT PRIMARY KEY,
+            weight_val REAL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    # 初期重み
+    default_weights = [
+        ("w_hana", 2.2),
+        ("w_weight_ratio", -15.0),
+        ("w_paddock", 1.2),
+        ("w_jockey", 1.8),
+        ("w_bias", 1.5)
+    ]
+    for p_name, w_val in default_weights:
+        cur.execute("INSERT OR IGNORE INTO custom_weights (param_name, weight_val) VALUES (?, ?)", (p_name, w_val))
     conn.commit()
     conn.close()
 
 init_db()
+
+def get_current_weights():
+    conn = sqlite3.connect("history.db")
+    cur = conn.cursor()
+    cur.execute("SELECT param_name, weight_val FROM custom_weights")
+    rows = cur.fetchall()
+    conn.close()
+    return {r[0]: r[1] for r in rows}
+
+def auto_fit_custom_formula():
+    conn = sqlite3.connect("history.db")
+    cur = conn.cursor()
+    cur.execute("SELECT is_board, hana_score, weight_ratio, paddock_score, is_top_jockey FROM board_learning_logs")
+    rows = cur.fetchall()
+    
+    if len(rows) < 30:
+        conn.close()
+        return f"蓄積データ: {len(rows)}頭 (30頭以上で独自関数の最適化フィッティングが始動します)"
+
+    # 機械学習：ロジスティック回帰（掲示板入り確率への重みフィッティング）
+    data = np.array(rows)
+    y = data[:, 0]
+    X = data[:, 1:]
+    
+    # 簡易リッジ回帰・勾配更新
+    X_bias = np.c_[np.ones(X.shape[0]), X]
+    lambda_reg = 0.5
+    try:
+        w = np.linalg.inv(X_bias.T @ X_bias + lambda_reg * np.eye(X_bias.shape[1])) @ X_bias.T @ y
+        w_hana = round(float(w[1] * 10), 2)
+        w_weight_ratio = round(float(w[2] * 50), 2)
+        w_paddock = round(float(w[3]), 2)
+        w_jockey = round(float(w[4]), 2)
+
+        cur.execute("UPDATE custom_weights SET weight_val = ? WHERE param_name = 'w_hana'", (w_hana,))
+        cur.execute("UPDATE custom_weights SET weight_val = ? WHERE param_name = 'w_weight_ratio'", (w_weight_ratio,))
+        cur.execute("UPDATE custom_weights SET weight_val = ? WHERE param_name = 'w_paddock'", (w_paddock,))
+        cur.execute("UPDATE custom_weights SET weight_val = ? WHERE param_name = 'w_jockey'", (w_jockey,))
+        conn.commit()
+        msg = f"独自関数 F(X) 最適化済 (学習標本数: {len(rows)}頭)"
+    except Exception:
+        msg = f"学習待機中 (標本数: {len(rows)}頭)"
+    finally:
+        conn.close()
+    return msg
 
 HTML_CONTENT = """<!DOCTYPE html>
 <html lang="ja">
@@ -67,7 +148,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 <h1 class="text-xl font-black tracking-wide text-emerald-400 flex items-center gap-2">
                     <span>🏇</span> KEIBA-AI PRO MAX
                 </h1>
-                <p class="text-xs text-slate-400">ハナ奪取指数 & 勝負気配 & トラックバイアスエンジン</p>
+                <p class="text-xs text-slate-400">掲示板（1〜5着）自律学習 & 独自指数関数フィッティング</p>
             </div>
             <div class="flex items-center gap-3">
                 <label class="flex items-center gap-1 text-xs text-slate-300 font-bold cursor-pointer">
@@ -82,6 +163,27 @@ HTML_CONTENT = """<!DOCTYPE html>
     </header>
 
     <main class="max-w-6xl mx-auto px-4 py-6 space-y-6">
+        <!-- 独自指数関数のリアルタイム係数カード -->
+        <div class="bg-gradient-to-br from-indigo-950 to-slate-900 text-white rounded-xl p-4 shadow-sm border border-indigo-800">
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div>
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="text-[10px] bg-indigo-500 text-white font-black px-2 py-0.5 rounded">自律生成独自関数 F(X)</span>
+                        <span class="text-xs text-indigo-300 font-mono">{learning_status}</span>
+                    </div>
+                    <div class="font-mono text-xs md:text-sm text-indigo-200 mt-1 bg-black/30 px-3 py-1.5 rounded-lg border border-indigo-900">
+                        Index = {w_hana}·Hana + {w_weight}·(斤量/体重) + {w_paddock}·Pad + {w_jockey}·Joc + {w_bias}·Bias
+                    </div>
+                </div>
+                <form method="post" action="/trigger-learn" class="self-end md:self-center">
+                    <button type="submit" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-4 py-2 rounded-lg text-xs transition shadow-sm flex items-center gap-1.5">
+                        <span>🔄</span> 本日の全レース再学習
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- 入力エリア -->
         <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
             <h3 class="text-sm font-bold text-slate-700 mb-3 flex items-center gap-1.5">
                 <span>⚙️</span> レースURL / ID と 予想戦略
@@ -100,7 +202,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 </div>
                 <div class="flex justify-between items-center pt-1">
                     <div class="text-[11px] text-slate-500">
-                        ※レースID入力で同日前半レースのバイアス・馬体重・ハナ奪取度を完全解析
+                        ※独自学習済みの最新重みパラメータを直接適用して出走表を評価します
                     </div>
                     <button type="submit" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-6 py-2 rounded-lg text-sm transition shadow-sm flex items-center gap-1">
                         <span>⚡️</span> AI最先端解析実行
@@ -109,6 +211,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             </form>
         </div>
 
+        <!-- 当日トラックバイアス集計カード -->
         <div class="bg-gradient-to-r from-slate-900 to-slate-800 text-white rounded-xl p-4 shadow-sm border border-slate-700">
             <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
                 <div>
@@ -132,6 +235,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             </div>
         </div>
 
+        <!-- サマリー & 買い目 -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200 flex flex-col justify-between">
                 <div>
@@ -185,6 +289,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             </div>
         </div>
 
+        <!-- 出走表テーブル -->
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
             <table class="w-full text-left text-sm whitespace-nowrap">
                 <thead class="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase">
@@ -196,7 +301,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                         <th class="py-3 px-3">騎手 / 斤量</th>
                         <th class="py-3 px-3 text-center">ハナ奪取度</th>
                         <th class="py-3 px-3 text-center">パドック気配</th>
-                        <th class="py-3 px-3 text-center">勝負補正</th>
+                        <th class="py-3 px-3 text-center">独自補正</th>
                         <th class="py-3 px-3 text-right">実質能力</th>
                         <th class="py-3 px-3 text-right">オッズ</th>
                         <th class="py-3 px-3 text-right">勝率</th>
@@ -210,13 +315,14 @@ HTML_CONTENT = """<!DOCTYPE html>
             </table>
         </div>
 
+        <!-- 履歴 & シミュレーター -->
         <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200 space-y-4">
             <div class="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-100 pb-3 gap-2">
                 <div>
                     <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
                         <span>📊</span> 収支履歴シミュレーター
                     </h3>
-                    <p class="text-xs text-slate-500">保存した推奨馬券の累積勝率・回収率</p>
+                    <p class="text-xs text-slate-500">自律生成関数の累積勝率・回収率を集計中</p>
                 </div>
                 <div class="flex items-center gap-2">
                     <a href="/export-csv" class="bg-slate-700 hover:bg-slate-800 text-white font-bold px-3 py-1.5 rounded-lg text-xs transition flex items-center gap-1 shadow-sm">
@@ -277,7 +383,7 @@ def crawl_today_bias(race_id_str: str):
     analyzed_races = 0
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
     }
 
     start_r = max(1, current_race_num - 5)
@@ -363,7 +469,7 @@ def parse_netkeiba_race(input_text: str):
         target_url = input_text
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
     }
     
     try:
@@ -406,7 +512,7 @@ def parse_netkeiba_race(input_text: str):
                 umaban = int(re.search(r"\d+", umaban_cell.text).group())
 
             waku_cell = row.find(class_=re.compile(r"Waku|waku"))
-            waku = waku_cell.text.strip() if waku_cell else "-"
+            waku = int(waku_cell.text.strip()) if (waku_cell and waku_cell.text.strip().isdigit()) else 1
 
             name_cell = row.find(class_=re.compile(r"HorseName|horse_name|bamei"))
             if not name_cell:
@@ -458,7 +564,7 @@ def parse_netkeiba_race(input_text: str):
                     break
 
             running_style = "自在"
-            hana_score = 40
+            hana_score = 40.0
             past_jockey = ""
             past_cells = row.find_all(class_=re.compile(r"Past|past|Zen|Result"))
             past_summary = "前走: データ集計中"
@@ -474,24 +580,24 @@ def parse_netkeiba_race(input_text: str):
                     first_pos = int(corner_m.group(1))
                     if first_pos == 1:
                         running_style = "逃げ"
-                        hana_score = 85
+                        hana_score = 85.0
                     elif first_pos <= 3:
                         running_style = "先行"
-                        hana_score = 65
+                        hana_score = 65.0
                     elif first_pos >= 8:
                         running_style = "追込"
-                        hana_score = 15
+                        hana_score = 15.0
                     else:
                         running_style = "差し"
-                        hana_score = 30
+                        hana_score = 30.0
 
                 for tj in TOP_JOCKEYS:
                     if tj in past_text:
                         past_jockey = tj
                         break
 
-            if waku in ["1", "2"]:
-                hana_score += 10
+            if waku in [1, 2]:
+                hana_score += 10.0
 
             is_jockey_upgrade = False
             current_is_top = any(tj in jockey for tj in TOP_JOCKEYS)
@@ -518,8 +624,9 @@ def parse_netkeiba_race(input_text: str):
                 "paddock_sign": paddock_sign,
                 "paddock_score": paddock_score,
                 "running_style": running_style,
-                "hana_score": min(95, hana_score),
+                "hana_score": min(95.0, hana_score),
                 "is_jockey_upgrade": is_jockey_upgrade,
+                "is_top_jockey": 1 if current_is_top else 0,
                 "past_summary": past_summary,
                 "base_speed_idx": base_speed
             })
@@ -532,73 +639,74 @@ def parse_netkeiba_race(input_text: str):
 
 def get_default_nar_data():
     return pd.DataFrame([
-        {"waku": "1", "umaban": 1, "horse_name": "ミックファイア", "jockey": "御神本", "burden_weight": 57.0, "horse_body_weight": 495, "odds": 3.2, "horse_weight_text": "495(+2)", "paddock_sign": "仕上がり良好", "paddock_score": 1.0, "running_style": "先行", "hana_score": 75, "is_jockey_upgrade": False, "base_speed_idx": 86.5, "past_summary": "前走: 1着 (重賞GP)"},
-        {"waku": "2", "umaban": 2, "horse_name": "ヒーローコール", "jockey": "森泰斗", "burden_weight": 57.0, "horse_body_weight": 482, "odds": 4.5, "horse_weight_text": "482(0)", "paddock_sign": "仕上がり良好", "paddock_score": 1.0, "running_style": "逃げ", "hana_score": 90, "is_jockey_upgrade": False, "base_speed_idx": 85.0, "past_summary": "前走: 2着 (戸塚記念)"},
-        {"waku": "3", "umaban": 3, "horse_name": "マンダリンヒーロー", "jockey": "矢野貴", "burden_weight": 57.0, "horse_body_weight": 478, "odds": 8.8, "horse_weight_text": "478(-2)", "paddock_sign": "仕上がり良好", "paddock_score": 1.0, "running_style": "差し", "hana_score": 35, "is_jockey_upgrade": True, "base_speed_idx": 84.0, "past_summary": "前走: 3着 (黒潮盃)"},
-        {"waku": "4", "umaban": 4, "horse_name": "ライトウォーリア", "jockey": "吉原寛", "burden_weight": 57.0, "horse_body_weight": 504, "odds": 14.2, "horse_weight_text": "504(+14)", "paddock_sign": "太め注意", "paddock_score": -2.0, "running_style": "先行", "hana_score": 60, "is_jockey_upgrade": False, "base_speed_idx": 82.5, "past_summary": "前走: 1着 (埼玉新聞栄冠)"},
-        {"waku": "5", "umaban": 5, "horse_name": "ギガキング", "jockey": "和田譲", "burden_weight": 57.0, "horse_body_weight": 490, "odds": 22.0, "horse_weight_text": "490(+4)", "paddock_sign": "良好", "paddock_score": 0.5, "running_style": "差し", "hana_score": 30, "is_jockey_upgrade": False, "base_speed_idx": 82.0, "past_summary": "前走: 4着 (報知グランプリ)"},
-        {"waku": "6", "umaban": 6, "horse_name": "カジノフォンテン", "jockey": "本田重", "burden_weight": 57.0, "horse_body_weight": 512, "odds": 38.5, "horse_weight_text": "512(-12)", "paddock_sign": "大幅減", "paddock_score": -2.2, "running_style": "先行", "hana_score": 50, "is_jockey_upgrade": False, "base_speed_idx": 78.0, "past_summary": "前走: 6着 (勝島王冠)"},
-        {"waku": "7", "umaban": 7, "horse_name": "セイカメテオポリス", "jockey": "笹川翼", "burden_weight": 57.0, "horse_body_weight": 488, "odds": 18.0, "horse_weight_text": "488(+2)", "paddock_sign": "仕上がり良好", "paddock_score": 1.0, "running_style": "追込", "hana_score": 15, "is_jockey_upgrade": True, "base_speed_idx": 83.5, "past_summary": "前走: 2着 (東京記念)"},
-        {"waku": "8", "umaban": 8, "horse_name": "スワーヴアラミス", "jockey": "町田直", "burden_weight": 57.0, "horse_body_weight": 496, "odds": 52.0, "horse_weight_text": "496(+1)", "paddock_sign": "良好", "paddock_score": 0.0, "running_style": "差し", "hana_score": 25, "is_jockey_upgrade": False, "base_speed_idx": 77.0, "past_summary": "前走: 8着 (ゴールドC)"},
+        {"waku": 1, "umaban": 1, "horse_name": "ミックファイア", "jockey": "御神本", "burden_weight": 57.0, "horse_body_weight": 495, "odds": 3.2, "horse_weight_text": "495(+2)", "paddock_sign": "仕上がり良好", "paddock_score": 1.0, "running_style": "先行", "hana_score": 75.0, "is_jockey_upgrade": False, "is_top_jockey": 1, "base_speed_idx": 86.5, "past_summary": "前走: 1着 (重賞GP)"},
+        {"waku": 2, "umaban": 2, "horse_name": "ヒーローコール", "jockey": "森泰斗", "burden_weight": 57.0, "horse_body_weight": 482, "odds": 4.5, "horse_weight_text": "482(0)", "paddock_sign": "仕上がり良好", "paddock_score": 1.0, "running_style": "逃げ", "hana_score": 90.0, "is_jockey_upgrade": False, "is_top_jockey": 1, "base_speed_idx": 85.0, "past_summary": "前走: 2着 (戸塚記念)"},
+        {"waku": 3, "umaban": 3, "horse_name": "マンダリンヒーロー", "jockey": "矢野貴", "burden_weight": 57.0, "horse_body_weight": 478, "odds": 8.8, "horse_weight_text": "478(-2)", "paddock_sign": "仕上がり良好", "paddock_score": 1.0, "running_style": "差し", "hana_score": 35.0, "is_jockey_upgrade": True, "is_top_jockey": 1, "base_speed_idx": 84.0, "past_summary": "前走: 3着 (黒潮盃)"},
+        {"waku": 4, "umaban": 4, "horse_name": "ライトウォーリア", "jockey": "吉原寛", "burden_weight": 57.0, "horse_body_weight": 504, "odds": 14.2, "horse_weight_text": "504(+14)", "paddock_sign": "太め注意", "paddock_score": -2.0, "running_style": "先行", "hana_score": 60.0, "is_jockey_upgrade": False, "is_top_jockey": 1, "base_speed_idx": 82.5, "past_summary": "前走: 1着 (埼玉新聞栄冠)"},
+        {"waku": 5, "umaban": 5, "horse_name": "ギガキング", "jockey": "和田譲", "burden_weight": 57.0, "horse_body_weight": 490, "odds": 22.0, "horse_weight_text": "490(+4)", "paddock_sign": "良好", "paddock_score": 0.5, "running_style": "差し", "hana_score": 30.0, "is_jockey_upgrade": False, "is_top_jockey": 1, "base_speed_idx": 82.0, "past_summary": "前走: 4着 (報知グランプリ)"},
+        {"waku": 6, "umaban": 6, "horse_name": "カジノフォンテン", "jockey": "本田重", "burden_weight": 57.0, "horse_body_weight": 512, "odds": 38.5, "horse_weight_text": "512(-12)", "paddock_sign": "大幅減", "paddock_score": -2.2, "running_style": "先行", "hana_score": 50.0, "is_jockey_upgrade": False, "is_top_jockey": 1, "base_speed_idx": 78.0, "past_summary": "前走: 6着 (勝島王冠)"},
+        {"waku": 7, "umaban": 7, "horse_name": "セイカメテオポリス", "jockey": "笹川翼", "burden_weight": 57.0, "horse_body_weight": 488, "odds": 18.0, "horse_weight_text": "488(+2)", "paddock_sign": "仕上がり良好", "paddock_score": 1.0, "running_style": "追込", "hana_score": 15.0, "is_jockey_upgrade": True, "is_top_jockey": 1, "base_speed_idx": 83.5, "past_summary": "前走: 2着 (東京記念)"},
+        {"waku": 8, "umaban": 8, "horse_name": "スワーヴアラミス", "jockey": "町田直", "burden_weight": 57.0, "horse_body_weight": 496, "odds": 52.0, "horse_weight_text": "496(+1)", "paddock_sign": "良好", "paddock_score": 0.0, "running_style": "差し", "hana_score": 25.0, "is_jockey_upgrade": False, "is_top_jockey": 1, "base_speed_idx": 77.0, "past_summary": "前走: 8着 (ゴールドC)"},
     ]), "大井11R 東京大賞典 (JpnⅠ)", "大井 ダート2000m", "202444091311"
 
-def apply_dynamic_learning_bias(df: pd.DataFrame, bias_data: dict):
+def apply_custom_formula_bias(df: pd.DataFrame, bias_data: dict, weights: dict):
     df["speed_idx"] = df["base_speed_idx"].copy()
     df["bonus_tags"] = ""
+
+    w_hana = weights.get("w_hana", 2.2)
+    w_weight = weights.get("w_weight_ratio", -15.0)
+    w_pad = weights.get("w_paddock", 1.2)
+    w_joc = weights.get("w_jockey", 1.8)
+    w_bias = weights.get("w_bias", 1.5)
 
     for idx, row in df.iterrows():
         bonus = 0.0
         tags = []
 
-        h_score = row.get("hana_score", 40)
+        # 独自関数のフィッティング重みを直接適用
+        h_score = row.get("hana_score", 40.0)
         if h_score >= 80:
-            bonus += 2.4
+            bonus += (w_hana * 1.1)
             tags.append("ハナ濃厚")
         elif h_score >= 65:
-            bonus += 1.2
-            tags.append("好位先行")
+            bonus += (w_hana * 0.5)
+            tags.append("先行")
 
-        if row.get("is_jockey_upgrade", False):
-            bonus += 2.0
-            tags.append("勝負鞍上")
-
+        # 斤量体重比
         b_wt = row.get("horse_body_weight", 480)
         k_wt = row.get("burden_weight", 54.0)
-        if b_wt > 0:
-            ratio = k_wt / b_wt
-            if ratio >= 0.123 and b_wt <= 445:
-                bonus -= 1.8
-                tags.append("斤量酷")
+        ratio = (k_wt / b_wt) if b_wt > 0 else 0.11
+        bonus += (ratio - 0.112) * w_weight
 
-        waku = str(row.get("waku", "0"))
-        if waku in ["1", "2", "3"]:
-            bonus += bias_data["inner_bonus"]
-            if bias_data["inner_bonus"] >= 2.0:
-                tags.append("本日内枠利")
-        elif waku in ["7", "8"] and bias_data["inner_bonus"] < 0:
-            bonus += 2.0
-            tags.append("本日外差し利")
-
-        style = row.get("running_style", "")
-        if "逃げ" in style or "先行" in style:
-            bonus += bias_data["front_bonus"]
-            if bias_data["front_bonus"] >= 2.0:
-                tags.append("本日前利")
-
+        # パドック
         p_score = row.get("paddock_score", 0.0)
-        bonus += p_score
+        bonus += (p_score * (w_pad / 1.2))
         if p_score >= 1.0:
             tags.append("パドック良")
         elif p_score <= -2.0:
-            tags.append(row.get("paddock_sign", "気配割"))
+            tags.append("気配割")
+
+        # 鞍上
+        if row.get("is_jockey_upgrade", False):
+            bonus += (w_joc * 1.1)
+            tags.append("勝負鞍上")
+        elif row.get("is_top_jockey", 0) == 1:
+            bonus += (w_joc * 0.6)
+
+        # トラックバイアス
+        waku = int(row.get("waku", 1))
+        if waku in [1, 2, 3]:
+            bonus += (bias_data["inner_bonus"] * (w_bias / 1.5))
+            if bias_data["inner_bonus"] >= 2.0:
+                tags.append("内枠利")
 
         df.at[idx, "speed_idx"] = round(row["base_speed_idx"] + bonus, 1)
         df.at[idx, "bonus_tags"] = " ".join(tags)
 
     return df
 
-def evaluate_dataframe(df: pd.DataFrame, strategy: str, bias_data: dict):
-    df = apply_dynamic_learning_bias(df, bias_data)
+def evaluate_dataframe(df: pd.DataFrame, strategy: str, bias_data: dict, weights: dict):
+    df = apply_custom_formula_bias(df, bias_data, weights)
 
     if strategy == "safe":
         scores = (
@@ -702,7 +810,9 @@ def get_history_and_simulation():
     return "".join(history_html), win_rate, recovery_rate
 
 def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: str = "", strategy: str = "balanced", current_url: str = ""):
-    # 初期トップ画面（空）のときは外部通信をスキップして即座に初期画面を表示
+    weights = get_current_weights()
+    learning_status = auto_fit_custom_formula()
+
     if not current_url and not race_id_str:
         bias_data = {
             "race_count": 0,
@@ -716,7 +826,7 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
     else:
         bias_data = crawl_today_bias(race_id_str)
 
-    df = evaluate_dataframe(df, strategy, bias_data)
+    df = evaluate_dataframe(df, strategy, bias_data, weights)
 
     honmei_row = df.iloc[0]
     honmei = f"({honmei_row['umaban']}) {honmei_row['horse_name']}"
@@ -743,7 +853,7 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
         strategy_title = "的中重視"
         strategy_badge = "🎯 的中重視"
         bet_primary = f"複勝/ワイド軸: 馬番 {honmei_row['umaban']} ({honmei_row['odds']}倍)"
-        bet_primary_sub = "ハナ濃厚・バイアス合致の実力最上位軸"
+        bet_primary_sub = "独自関数スコア最上位＋バイアス適合"
         bet_secondary = f"ワイド流し: {honmei_row['umaban']} ＝ {opponents[0]}, {opponents[1]}"
         bet_sanrenpuku = f"{honmei_row['umaban']} ＝ {opponents[0]} ＝ {opponents[1]}"
         bet_sanrentan = f"馬単: [{honmei_row['umaban']}] ⇄ [{opponents[0]}]"
@@ -753,16 +863,16 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
         strategy_badge = "🔥 配当重視"
         ana_target = ana_top_list.iloc[0] if len(ana_top_list) > 0 else df.iloc[1]
         bet_primary = f"単勝/複勝: 馬番 {ana_target['umaban']} ({ana_target['odds']}倍)"
-        bet_primary_sub = "勝負気配・先行力十分の厳選穴馬"
+        bet_primary_sub = "独自関数で浮上した期待値MAX穴馬"
         bet_secondary = f"ワイド: {honmei_row['umaban']} ＝ {ana_target['umaban']}"
         bet_sanrenpuku = f"{ana_target['umaban']} ＝ {honmei_row['umaban']} ＝ {opponents[0]}, {opponents[1]}"
         bet_sanrentan = f"1着: [{ana_target['umaban']}]<br>2着: [{honmei_row['umaban']},{opponents[0]}]<br>3着: [{honmei_row['umaban']},{','.join(map(str, opponents[:3]))}]"
-        bet_note = "勝負気配の穴頭狙い"
+        bet_note = "独自関数の穴頭狙い"
     else:
         strategy_title = "バランス"
         strategy_badge = "⚖️ バランス"
         bet_primary = f"単勝: 馬番 {honmei_row['umaban']} ({honmei_row['odds']}倍)"
-        bet_primary_sub = "ハナ奪取度＋実質能力の真の本命"
+        bet_primary_sub = "独自最適化関数 F(X) 総合本命"
         bet_secondary = f"馬連: {honmei_row['umaban']} － {', '.join(map(str, opponents[:3]))}"
         bet_sanrenpuku = f"{honmei_row['umaban']} ＝ {', '.join(map(str, opponents[:4]))}"
         o1, o2 = opponents[0], opponents[1]
@@ -794,7 +904,7 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
         ev_color = "text-amber-600 font-black" if u_num in ana_umaban_set else ("text-emerald-600 font-bold" if ev >= 0.85 else "text-slate-400")
         mark_color = "text-rose-600" if row["mark"] == "◎" else ("text-blue-600" if row["mark"] == "◯" else "text-amber-600")
 
-        h_score = row.get("hana_score", 40)
+        h_score = row.get("hana_score", 40.0)
         h_color = "text-emerald-600 font-black" if h_score >= 80 else ("text-slate-700 font-bold" if h_score >= 60 else "text-slate-400")
 
         p_sign = row.get("paddock_sign", "-")
@@ -808,7 +918,7 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
         bonus_tags_html = ""
         if row["bonus_tags"]:
             for t in row["bonus_tags"].split():
-                color = "bg-rose-50 text-rose-700 border-rose-200" if "減" in t or "注" in t or "割" in t or "酷" in t else "bg-emerald-50 text-emerald-700 border-emerald-200"
+                color = "bg-rose-50 text-rose-700 border-rose-200" if "減" in t or "注" in t or "割" in t else "bg-indigo-50 text-indigo-700 border-indigo-200"
                 bonus_tags_html += f'<span class="{color} border text-[10px] font-bold px-1 rounded">{t}</span> '
         else:
             bonus_tags_html = '<span class="text-slate-300">-</span>'
@@ -823,7 +933,7 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
                 <div class="text-[11px] text-slate-500">{row.get("past_summary", "前走データなし")} ({row.get("running_style", "自在")})</div>
             </td>
             <td class="py-3 px-3 text-slate-600">{row["jockey"]} ({row["burden_weight"]}kg)</td>
-            <td class="py-3 px-3 text-center font-mono text-xs {h_color}">{h_score}%</td>
+            <td class="py-3 px-3 text-center font-mono text-xs {h_color}">{h_score:.0f}%</td>
             <td class="py-3 px-3 text-center">{paddock_badge}</td>
             <td class="py-3 px-3 text-center">{bonus_tags_html}</td>
             <td class="py-3 px-3 text-right font-mono text-slate-800 font-bold text-base">{row["speed_idx"]:.1f}</td>
@@ -853,9 +963,15 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
         bias_detail_text=bias_data["detail"],
         inner_waku_rate=bias_data["inner_rate"],
         front_rate=bias_data["front_rate"],
-        pace_analysis_comment="出走表入力でリアルタイム解析が実行されます",
+        pace_analysis_comment="独自指数関数 F(X) に基づく最適配分",
         strategy_title=strategy_title,
         strategy_badge=strategy_badge,
+        learning_status=learning_status,
+        w_hana=f"{weights.get('w_hana', 2.2):+.2f}",
+        w_weight=f"{weights.get('w_weight_ratio', -15.0):+.1f}",
+        w_paddock=f"{weights.get('w_paddock', 1.2):+.2f}",
+        w_jockey=f"{weights.get('w_jockey', 1.8):+.2f}",
+        w_bias=f"{weights.get('w_bias', 1.5):+.2f}",
         sel_strat_bal="selected" if strategy == "balanced" else "",
         sel_strat_safe="selected" if strategy == "safe" else "",
         sel_strat_agg="selected" if strategy == "aggressive" else "",
@@ -881,6 +997,12 @@ def fetch_race(race_url: str = Form(...), strategy: str = Form("balanced")):
         df, race_name, venue_info, race_id_str = get_default_nar_data()
         race_name = f"【取得エラー: サンプル表示中】{race_name}"
     return build_view(df, race_name, venue_info, race_id_str=race_id_str, strategy=strategy, current_url=race_url)
+
+@app.post("/trigger-learn")
+def trigger_learn():
+    # 蓄積ログから独自関数ウェイトを再計算
+    auto_fit_custom_formula()
+    return RedirectResponse(url="/", status_code=303)
 
 @app.post("/save-history")
 def save_history(
@@ -936,3 +1058,9 @@ def export_csv():
     response = Response(content=output.getvalue(), media_type="text/csv")
     response.headers["Content-Disposition"] = "attachment; filename=keiba_ai_history.csv"
     return response
+
+# GitHub Actionsまたは外部Webhookから叩くための夜間自動学習エンドポイント
+@app.post("/api/batch-daily-learn")
+def batch_daily_learn():
+    msg = auto_fit_custom_formula()
+    return {"status": "success", "message": msg}

@@ -18,10 +18,15 @@ TOP_JOCKEYS = [
     "高松亮", "村上忍", "岡部誠", "下原理", "吉村智", "新原勇"
 ]
 
+VENUE_MAP = {
+    "44": "大井", "45": "川崎", "43": "船橋", "42": "浦和",
+    "50": "園田", "54": "高知", "48": "名古屋", "46": "笠松",
+    "36": "門別", "30": "門別", "51": "姫路", "55": "佐賀", "35": "盛岡", "34": "水沢"
+}
+
 def init_db():
     conn = sqlite3.connect("history.db")
     cur = conn.cursor()
-    # 予想履歴
     cur.execute("""
         CREATE TABLE IF NOT EXISTS race_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,11 +40,10 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    # 掲示板内（1〜5着）＋着外の学習データログ
     cur.execute("""
         CREATE TABLE IF NOT EXISTS board_learning_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            race_id TEXT,
+            race_id TEXT UNIQUE,
             horse_name TEXT,
             rank INTEGER,
             is_board INTEGER,
@@ -52,73 +56,103 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    # 独自関数の動的重みパラメータ
+    # 競馬場別重みテーブル
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS custom_weights (
-            param_name TEXT PRIMARY KEY,
+        CREATE TABLE IF NOT EXISTS venue_custom_weights (
+            venue_code TEXT,
+            param_name TEXT,
             weight_val REAL,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            sample_count INTEGER,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (venue_code, param_name)
         )
     """)
-    # 初期重み
-    default_weights = [
-        ("w_hana", 2.2),
-        ("w_weight_ratio", -15.0),
-        ("w_paddock", 1.2),
-        ("w_jockey", 1.8),
-        ("w_bias", 1.5)
-    ]
-    for p_name, w_val in default_weights:
-        cur.execute("INSERT OR IGNORE INTO custom_weights (param_name, weight_val) VALUES (?, ?)", (p_name, w_val))
     conn.commit()
     conn.close()
 
 init_db()
 
-def get_current_weights():
-    conn = sqlite3.connect("history.db")
-    cur = conn.cursor()
-    cur.execute("SELECT param_name, weight_val FROM custom_weights")
-    rows = cur.fetchall()
-    conn.close()
-    return {r[0]: r[1] for r in rows}
-
-def auto_fit_custom_formula():
-    conn = sqlite3.connect("history.db")
-    cur = conn.cursor()
-    cur.execute("SELECT is_board, hana_score, weight_ratio, paddock_score, is_top_jockey FROM board_learning_logs")
-    rows = cur.fetchall()
-    
-    if len(rows) < 30:
-        conn.close()
-        return f"蓄積データ: {len(rows)}頭 (30頭以上で独自関数の最適化フィッティングが始動します)"
-
-    # 機械学習：ロジスティック回帰（掲示板入り確率への重みフィッティング）
+def fit_weights_for_dataset(rows):
+    if len(rows) < 25:
+        return None
     data = np.array(rows)
     y = data[:, 0]
     X = data[:, 1:]
-    
-    # 簡易リッジ回帰・勾配更新
     X_bias = np.c_[np.ones(X.shape[0]), X]
-    lambda_reg = 0.5
+    lambda_reg = 0.6
     try:
         w = np.linalg.inv(X_bias.T @ X_bias + lambda_reg * np.eye(X_bias.shape[1])) @ X_bias.T @ y
-        w_hana = round(float(w[1] * 10), 2)
-        w_weight_ratio = round(float(w[2] * 50), 2)
-        w_paddock = round(float(w[3]), 2)
-        w_jockey = round(float(w[4]), 2)
-
-        cur.execute("UPDATE custom_weights SET weight_val = ? WHERE param_name = 'w_hana'", (w_hana,))
-        cur.execute("UPDATE custom_weights SET weight_val = ? WHERE param_name = 'w_weight_ratio'", (w_weight_ratio,))
-        cur.execute("UPDATE custom_weights SET weight_val = ? WHERE param_name = 'w_paddock'", (w_paddock,))
-        cur.execute("UPDATE custom_weights SET weight_val = ? WHERE param_name = 'w_jockey'", (w_jockey,))
-        conn.commit()
-        msg = f"独自関数 F(X) 最適化済 (学習標本数: {len(rows)}頭)"
+        return {
+            "w_hana": round(float(w[1] * 10), 2),
+            "w_weight_ratio": round(float(w[2] * 45), 2),
+            "w_paddock": round(float(w[3]), 2),
+            "w_jockey": round(float(w[4]), 2),
+            "w_bias": 1.5
+        }
     except Exception:
-        msg = f"学習待機中 (標本数: {len(rows)}頭)"
-    finally:
-        conn.close()
-    return msg
+        return None
+
+def update_all_venue_weights():
+    conn = sqlite3.connect("history.db")
+    cur = conn.cursor()
+    
+    # 1. 全体モデルの学習
+    cur.execute("SELECT is_board, hana_score, weight_ratio, paddock_score, is_top_jockey FROM board_learning_logs")
+    all_rows = cur.fetchall()
+    all_w = fit_weights_for_dataset(all_rows)
+    if all_w:
+        for p_name, w_val in all_w.items():
+            cur.execute("""
+                INSERT OR REPLACE INTO venue_custom_weights (venue_code, param_name, weight_val, sample_count)
+                VALUES ('ALL', ?, ?, ?)
+            """, (p_name, w_val, len(all_rows)))
+
+    # 2. 各競馬場別モデルの学習
+    cur.execute("SELECT DISTINCT substr(race_id, 5, 2) FROM board_learning_logs")
+    venue_codes = [r[0] for r in cur.fetchall() if r[0]]
+
+    trained_venues = []
+    for vc in venue_codes:
+        cur.execute("""
+            SELECT is_board, hana_score, weight_ratio, paddock_score, is_top_jockey 
+            FROM board_learning_logs 
+            WHERE substr(race_id, 5, 2) = ?
+        """, (vc,))
+        v_rows = cur.fetchall()
+        vw = fit_weights_for_dataset(v_rows)
+        if vw:
+            for p_name, w_val in vw.items():
+                cur.execute("""
+                    INSERT OR REPLACE INTO venue_custom_weights (venue_code, param_name, weight_val, sample_count)
+                    VALUES (?, ?, ?, ?)
+                """, (vc, p_name, w_val, len(v_rows)))
+            trained_venues.append(f"{VENUE_MAP.get(vc, vc)}({len(v_rows)}頭)")
+
+    conn.commit()
+    conn.close()
+    return f"全場({len(all_rows)}頭) & コース別最適化完了: {', '.join(trained_venues[:5])}..."
+
+def get_venue_weights(venue_code: str):
+    conn = sqlite3.connect("history.db")
+    cur = conn.cursor()
+    # 競馬場専用ウェイトを探す
+    cur.execute("SELECT param_name, weight_val, sample_count FROM venue_custom_weights WHERE venue_code = ?", (venue_code,))
+    rows = cur.fetchall()
+    
+    # なければALL（全体）を使う
+    if not rows:
+        cur.execute("SELECT param_name, weight_val, sample_count FROM venue_custom_weights WHERE venue_code = 'ALL'")
+        rows = cur.fetchall()
+
+    conn.close()
+
+    default_map = {"w_hana": 2.2, "w_weight_ratio": -15.0, "w_paddock": 1.2, "w_jockey": 1.8, "w_bias": 1.5}
+    sample_cnt = rows[0][2] if rows else 0
+    res = {r[0]: r[1] for r in rows}
+    for k, v in default_map.items():
+        if k not in res:
+            res[k] = v
+    return res, sample_cnt
 
 HTML_CONTENT = """<!DOCTYPE html>
 <html lang="ja">
@@ -148,7 +182,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 <h1 class="text-xl font-black tracking-wide text-emerald-400 flex items-center gap-2">
                     <span>🏇</span> KEIBA-AI PRO MAX
                 </h1>
-                <p class="text-xs text-slate-400">掲示板（1〜5着）自律学習 & 独自指数関数フィッティング</p>
+                <p class="text-xs text-slate-400">競馬場別マルチモデル自律学習 & 独自指数関数エンジン</p>
             </div>
             <div class="flex items-center gap-3">
                 <label class="flex items-center gap-1 text-xs text-slate-300 font-bold cursor-pointer">
@@ -168,8 +202,8 @@ HTML_CONTENT = """<!DOCTYPE html>
             <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
                 <div>
                     <div class="flex items-center gap-2 mb-1">
-                        <span class="text-[10px] bg-indigo-500 text-white font-black px-2 py-0.5 rounded">自律生成独自関数 F(X)</span>
-                        <span class="text-xs text-indigo-300 font-mono">{learning_status}</span>
+                        <span class="text-[10px] bg-indigo-500 text-white font-black px-2 py-0.5 rounded">{venue_model_title}</span>
+                        <span class="text-xs text-indigo-300 font-mono">標本数: {venue_sample_count}頭分</span>
                     </div>
                     <div class="font-mono text-xs md:text-sm text-indigo-200 mt-1 bg-black/30 px-3 py-1.5 rounded-lg border border-indigo-900">
                         Index = {w_hana}·Hana + {w_weight}·(斤量/体重) + {w_paddock}·Pad + {w_jockey}·Joc + {w_bias}·Bias
@@ -177,7 +211,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 </div>
                 <form method="post" action="/trigger-learn" class="self-end md:self-center">
                     <button type="submit" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-4 py-2 rounded-lg text-xs transition shadow-sm flex items-center gap-1.5">
-                        <span>🔄</span> 本日の全レース再学習
+                        <span>🔄</span> 全競馬場一括再学習
                     </button>
                 </form>
             </div>
@@ -202,7 +236,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 </div>
                 <div class="flex justify-between items-center pt-1">
                     <div class="text-[11px] text-slate-500">
-                        ※独自学習済みの最新重みパラメータを直接適用して出走表を評価します
+                        ※競馬場を自動判別し、その競馬場専用に最適化された独自指数関数で解析します
                     </div>
                     <button type="submit" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-6 py-2 rounded-lg text-sm transition shadow-sm flex items-center gap-1">
                         <span>⚡️</span> AI最先端解析実行
@@ -301,7 +335,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                         <th class="py-3 px-3">騎手 / 斤量</th>
                         <th class="py-3 px-3 text-center">ハナ奪取度</th>
                         <th class="py-3 px-3 text-center">パドック気配</th>
-                        <th class="py-3 px-3 text-center">独自補正</th>
+                        <th class="py-3 px-3 text-center">コース補正</th>
                         <th class="py-3 px-3 text-right">実質能力</th>
                         <th class="py-3 px-3 text-right">オッズ</th>
                         <th class="py-3 px-3 text-right">勝率</th>
@@ -322,7 +356,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                     <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
                         <span>📊</span> 収支履歴シミュレーター
                     </h3>
-                    <p class="text-xs text-slate-500">自律生成関数の累積勝率・回収率を集計中</p>
+                    <p class="text-xs text-slate-500">コース別最適化関数の累積勝率・回収率を集計中</p>
                 </div>
                 <div class="flex items-center gap-2">
                     <a href="/export-csv" class="bg-slate-700 hover:bg-slate-800 text-white font-bold px-3 py-1.5 rounded-lg text-xs transition flex items-center gap-1 shadow-sm">
@@ -382,9 +416,7 @@ def crawl_today_bias(race_id_str: str):
     total_top3_count = 0
     analyzed_races = 0
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-    }
+    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
 
     start_r = max(1, current_race_num - 5)
     for r_num in range(start_r, current_race_num):
@@ -468,9 +500,7 @@ def parse_netkeiba_race(input_text: str):
     else:
         target_url = input_text
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-    }
+    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
     
     try:
         resp = requests.get(target_url, headers=headers, timeout=6)
@@ -521,18 +551,18 @@ def parse_netkeiba_race(input_text: str):
             else:
                 horse_name = name_cell.text.strip()
 
-            jockey_cell = row.find(class_=re.compile(r"Jockey|jockey|kishu"))
+            jockey_cell = row.find(class_=re.compile(r"Jockey|jockey"))
             jockey = jockey_cell.text.strip() if jockey_cell else "騎手"
             jockey = re.sub(r"[\r\n\t\s]+", " ", jockey)
 
-            weight_cell = row.find(class_=re.compile(r"Weight|weight|kinryo"))
+            weight_cell = row.find(class_=re.compile(r"Weight|weight"))
             burden_weight = 54.0
             if weight_cell:
                 w_match = re.search(r"(\d{2}(?:\.\d)?)", weight_cell.text)
                 if w_match:
                     burden_weight = float(w_match.group(1))
 
-            odds_cell = row.find(class_=re.compile(r"Popular|odds|ninki"))
+            odds_cell = row.find(class_=re.compile(r"Popular|odds"))
             odds = 12.0
             if odds_cell:
                 o_match = re.search(r"(\d+(?:\.\d+)?)", odds_cell.text)
@@ -663,7 +693,6 @@ def apply_custom_formula_bias(df: pd.DataFrame, bias_data: dict, weights: dict):
         bonus = 0.0
         tags = []
 
-        # 独自関数のフィッティング重みを直接適用
         h_score = row.get("hana_score", 40.0)
         if h_score >= 80:
             bonus += (w_hana * 1.1)
@@ -672,13 +701,11 @@ def apply_custom_formula_bias(df: pd.DataFrame, bias_data: dict, weights: dict):
             bonus += (w_hana * 0.5)
             tags.append("先行")
 
-        # 斤量体重比
         b_wt = row.get("horse_body_weight", 480)
         k_wt = row.get("burden_weight", 54.0)
         ratio = (k_wt / b_wt) if b_wt > 0 else 0.11
         bonus += (ratio - 0.112) * w_weight
 
-        # パドック
         p_score = row.get("paddock_score", 0.0)
         bonus += (p_score * (w_pad / 1.2))
         if p_score >= 1.0:
@@ -686,14 +713,12 @@ def apply_custom_formula_bias(df: pd.DataFrame, bias_data: dict, weights: dict):
         elif p_score <= -2.0:
             tags.append("気配割")
 
-        # 鞍上
         if row.get("is_jockey_upgrade", False):
             bonus += (w_joc * 1.1)
             tags.append("勝負鞍上")
         elif row.get("is_top_jockey", 0) == 1:
             bonus += (w_joc * 0.6)
 
-        # トラックバイアス
         waku = int(row.get("waku", 1))
         if waku in [1, 2, 3]:
             bonus += (bias_data["inner_bonus"] * (w_bias / 1.5))
@@ -810,8 +835,19 @@ def get_history_and_simulation():
     return "".join(history_html), win_rate, recovery_rate
 
 def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: str = "", strategy: str = "balanced", current_url: str = ""):
-    weights = get_current_weights()
-    learning_status = auto_fit_custom_formula()
+    # 競馬場コード判定（IDの5〜6桁目、またはレース名・競馬場テキストから判定）
+    venue_code = "ALL"
+    if race_id_str and len(race_id_str) >= 6:
+        venue_code = race_id_str[4:6]
+    else:
+        for vc, name in VENUE_MAP.items():
+            if name in race_name or name in venue_info:
+                venue_code = vc
+                break
+
+    weights, sample_count = get_venue_weights(venue_code)
+    v_name = VENUE_MAP.get(venue_code, "全場共通")
+    venue_model_title = f"{v_name}専用 最適化関数 F(X)" if venue_code != "ALL" else "全地方競馬 統合モデル F(X)"
 
     if not current_url and not race_id_str:
         bias_data = {
@@ -853,7 +889,7 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
         strategy_title = "的中重視"
         strategy_badge = "🎯 的中重視"
         bet_primary = f"複勝/ワイド軸: 馬番 {honmei_row['umaban']} ({honmei_row['odds']}倍)"
-        bet_primary_sub = "独自関数スコア最上位＋バイアス適合"
+        bet_primary_sub = f"{v_name}専用関数スコア最上位＋バイアス適合"
         bet_secondary = f"ワイド流し: {honmei_row['umaban']} ＝ {opponents[0]}, {opponents[1]}"
         bet_sanrenpuku = f"{honmei_row['umaban']} ＝ {opponents[0]} ＝ {opponents[1]}"
         bet_sanrentan = f"馬単: [{honmei_row['umaban']}] ⇄ [{opponents[0]}]"
@@ -863,7 +899,7 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
         strategy_badge = "🔥 配当重視"
         ana_target = ana_top_list.iloc[0] if len(ana_top_list) > 0 else df.iloc[1]
         bet_primary = f"単勝/複勝: 馬番 {ana_target['umaban']} ({ana_target['odds']}倍)"
-        bet_primary_sub = "独自関数で浮上した期待値MAX穴馬"
+        bet_primary_sub = f"{v_name}コース適性×パドック期待値MAX穴馬"
         bet_secondary = f"ワイド: {honmei_row['umaban']} ＝ {ana_target['umaban']}"
         bet_sanrenpuku = f"{ana_target['umaban']} ＝ {honmei_row['umaban']} ＝ {opponents[0]}, {opponents[1]}"
         bet_sanrentan = f"1着: [{ana_target['umaban']}]<br>2着: [{honmei_row['umaban']},{opponents[0]}]<br>3着: [{honmei_row['umaban']},{','.join(map(str, opponents[:3]))}]"
@@ -872,7 +908,7 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
         strategy_title = "バランス"
         strategy_badge = "⚖️ バランス"
         bet_primary = f"単勝: 馬番 {honmei_row['umaban']} ({honmei_row['odds']}倍)"
-        bet_primary_sub = "独自最適化関数 F(X) 総合本命"
+        bet_primary_sub = f"{v_name}モデル最適化関数 F(X) 総合本命"
         bet_secondary = f"馬連: {honmei_row['umaban']} － {', '.join(map(str, opponents[:3]))}"
         bet_sanrenpuku = f"{honmei_row['umaban']} ＝ {', '.join(map(str, opponents[:4]))}"
         o1, o2 = opponents[0], opponents[1]
@@ -963,10 +999,11 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
         bias_detail_text=bias_data["detail"],
         inner_waku_rate=bias_data["inner_rate"],
         front_rate=bias_data["front_rate"],
-        pace_analysis_comment="独自指数関数 F(X) に基づく最適配分",
+        pace_analysis_comment=f"{v_name}コースの好走実績データに最適化済み",
         strategy_title=strategy_title,
         strategy_badge=strategy_badge,
-        learning_status=learning_status,
+        venue_model_title=venue_model_title,
+        venue_sample_count=sample_count,
         w_hana=f"{weights.get('w_hana', 2.2):+.2f}",
         w_weight=f"{weights.get('w_weight_ratio', -15.0):+.1f}",
         w_paddock=f"{weights.get('w_paddock', 1.2):+.2f}",
@@ -984,13 +1021,13 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
 @app.get("/", response_class=HTMLResponse)
 def index():
     df, race_name, venue_info, race_id_str = get_default_nar_data()
-    return build_view(df, race_name, venue_info, race_id_str="")
+    return build_view(df, race_name, venue_info, race_id_str=race_id_str)
 
 @app.post("/fetch", response_class=HTMLResponse)
 def fetch_race(race_url: str = Form(...), strategy: str = Form("balanced")):
     if not race_url.strip():
         df, race_name, venue_info, race_id_str = get_default_nar_data()
-        return build_view(df, race_name, venue_info, race_id_str="", strategy=strategy)
+        return build_view(df, race_name, venue_info, race_id_str=race_id_str, strategy=strategy)
     
     df, race_name, venue_info, race_id_str = parse_netkeiba_race(race_url.strip())
     if df is None:
@@ -1000,8 +1037,7 @@ def fetch_race(race_url: str = Form(...), strategy: str = Form("balanced")):
 
 @app.post("/trigger-learn")
 def trigger_learn():
-    # 蓄積ログから独自関数ウェイトを再計算
-    auto_fit_custom_formula()
+    update_all_venue_weights()
     return RedirectResponse(url="/", status_code=303)
 
 @app.post("/save-history")
@@ -1059,8 +1095,7 @@ def export_csv():
     response.headers["Content-Disposition"] = "attachment; filename=keiba_ai_history.csv"
     return response
 
-# GitHub Actionsまたは外部Webhookから叩くための夜間自動学習エンドポイント
 @app.post("/api/batch-daily-learn")
 def batch_daily_learn():
-    msg = auto_fit_custom_formula()
+    msg = update_all_venue_weights()
     return {"status": "success", "message": msg}

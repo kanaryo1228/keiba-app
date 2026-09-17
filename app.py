@@ -567,14 +567,20 @@ def parse_netkeiba_race(input_text: str):
                 if w_match:
                     burden_weight = float(w_match.group(1))
 
-            odds_cell = row.find(class_=re.compile(r"Popular|odds"))
-            odds = 12.0
-            if odds_cell:
-                o_match = re.search(r"(\d+(?:\.\d+)?)", odds_cell.text)
-                if o_match:
-                    val = float(o_match.group(1))
-                    if val > 1.0:
-                        odds = val
+            # td[09]またはPopularセルから正確な出走前単勝オッズを取得
+            odds = 99.0
+            if len(tds) >= 10:
+                o_str = tds[9].text.strip()
+                try:
+                    odds = float(o_str)
+                except ValueError:
+                    pass
+            if odds == 99.0:
+                odds_cell = row.find(class_=re.compile(r"Popular|odds"))
+                if odds_cell:
+                    m = re.search(r"(\d{1,3}\.\d)", odds_cell.text)
+                    if m:
+                        odds = float(m.group(1))
 
             paddock_sign = "良好"
             paddock_score = 0.0

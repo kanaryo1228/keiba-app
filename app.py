@@ -1188,7 +1188,10 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
             <td class="py-3 px-3 text-center font-mono text-slate-500">{row.get("waku", "-")}</td>
             <td class="py-3 px-3 text-center font-mono font-bold text-slate-700">{row["umaban"]}</td>
             <td class="py-3 px-4">
-                <div class="font-bold text-slate-900">{row["horse_name"]}</div>
+                <div class="font-bold text-amber-300 hover:text-amber-200 cursor-pointer underline decoration-dotted flex items-center space-x-1" onclick="openHorseModal(this)" data-umaban="{row['umaban']}" data-name="{row['horse_name']}" data-sire="{row.get('sire', '未登録')}" data-bms="{row.get('bms', '未登録')}" data-grade="{row.get('blood_grade', 'B')}" data-traits="{row.get('blood_traits', '')}" data-bonus="{row.get('bms_bonus', '')}">
+    <span>{row["horse_name"]}</span>
+    <span class="text-[10px] text-amber-400">🔍</span>
+</div>
                 <div class="text-[11px] text-slate-500">{row.get("past_summary", "前走データなし")} ({row.get("running_style", "自在")})</div>
             </td>
             <td class="py-3 px-3 text-slate-600">{row["jockey"]} ({row["burden_weight"]}kg)</td>

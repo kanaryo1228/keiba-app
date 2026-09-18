@@ -125,6 +125,23 @@ async def bloodline_search(request: Request, venue: str = "大井", sire: str = 
 
 </body>
 </html>"""
+        # AI解説カードの安全な文字列結合
+    try:
+        commentary_card = f"""
+        <div style="margin: 24px auto; max-width: 960px; padding: 22px; background: #ffffff; border-radius: 12px; box-shadow: 0 4px 14px rgba(0,0,0,0.07); border-left: 6px solid #2563eb; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">
+            <div style="font-size: 1.15rem; font-weight: bold; color: #1e293b; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 1.3rem;">🧠</span> AIレース展開・血統・選定理由の解説
+            </div>
+            <div style="font-size: 0.95rem; line-height: 1.8; color: #334155; white-space: pre-wrap; background: #f8fafc; padding: 16px; border-radius: 8px; border: 1px solid #e2e8f0;">{ai_commentary}</div>
+        </div>
+        """
+        if "</body>" in html:
+            html = html.replace("</body>", commentary_card + "</body>")
+        else:
+            html += commentary_card
+    except Exception:
+        pass
+
     return HTMLResponse(content=html)
 
 TOP_JOCKEYS = [
@@ -586,14 +603,7 @@ HTML_CONTENT = """<!DOCTYPE html>
 <script src="/static/modal.js"></script>
 
 
-    <!-- AI展開・血統解説カード -->
-    <div style="margin: 24px auto; max-width: 960px; padding: 22px; background: #ffffff; border-radius: 12px; box-shadow: 0 4px 14px rgba(0,0,0,0.07); border-left: 6px solid #2563eb; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">
-        <div style="font-size: 1.15rem; font-weight: bold; color: #1e293b; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
-            <span style="font-size: 1.3rem;">🧠</span> AIレース展開・血統・選定理由の解説
-        </div>
-        <div style="font-size: 0.95rem; line-height: 1.8; color: #334155; white-space: pre-wrap; background: #f8fafc; padding: 16px; border-radius: 8px; border: 1px solid #e2e8f0;">{ai_commentary}</div>
-    </div>
-</body>
+    </body>
 </html>
 """
 
@@ -1085,9 +1095,22 @@ def generate_ai_commentary(df, race_name, venue_info, strategy="balanced"):
         return "出走馬データが取得できませんでした。"
     
     # 印で馬を抽出
-    top = df[df["mark"] == "◎"].iloc[0] if not df[df["mark"] == "◎"].empty else df.iloc[0]
-    sub = df[df["mark"] == "○"].iloc[0] if not df[df["mark"] == "○"].empty else (df.iloc[1] if len(df) > 1 else None)
-    ana = df[df["mark"].isin(["▲", "△"])].iloc[0] if not df[df["mark"].isin(["▲", "△"])].empty else None
+    # 印列の安全な取得
+    has_mark = "mark" in df.columns
+    if has_mark and not df[df["mark"] == "◎" if "mark" in df.columns else False].empty:
+        top = df[df["mark"] == "◎" if "mark" in df.columns else False].iloc[0]
+    else:
+        top = df.iloc[0]
+
+    if has_mark and not df[df["mark"] == "○" if "mark" in df.columns else False].empty:
+        sub = df[df["mark"] == "○" if "mark" in df.columns else False].iloc[0]
+    else:
+        sub = df.iloc[1] if len(df) > 1 else None
+
+    if has_mark and not df[df["mark"].isin(["▲", "△"]) if "mark" in df.columns else False].empty:
+        ana = df[df["mark"].isin(["▲", "△"]) if "mark" in df.columns else False].iloc[0]
+    else:
+        ana = df.iloc[2] if len(df) > 2 else None
 
     # 本命馬の評価ポイント
     top_reasons = []

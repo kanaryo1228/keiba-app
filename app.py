@@ -908,7 +908,13 @@ def parse_netkeiba_race(input_text: str):
                 "is_jockey_upgrade": is_jockey_upgrade,
                 "is_top_jockey": 1 if current_is_top else 0,
                 "past_summary": past_summary,
-                "base_speed_idx": base_speed
+                "base_speed_idx": base_speed,
+                "sire": sire_name if sire_name else "血統分析中",
+                "bms": bms_name if bms_name else "標準適性",
+                "blood_score": blood_score,
+                "blood_grade": blood_grade,
+                "blood_traits": blood_traits,
+                "bms_bonus": bms_bonus_desc
             })
         except Exception:
             continue

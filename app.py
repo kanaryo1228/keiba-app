@@ -847,6 +847,24 @@ def get_history_and_simulation():
 
 def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: str = "", strategy: str = "balanced", current_url: str = ""):
     # 競馬場コード判定（IDの5〜6桁目、またはレース名・競馬場テキストから判定）
+
+    # 三連系自動生成
+    try:
+        top_uma = [str(r['umaban']) for r in df.head(5).to_dict('records')]
+        if len(top_uma) >= 5:
+            # 三連複: ◎ - 相手4頭 (6点)
+            f_list = [f"{top_uma[0]}-{top_uma[i]}-{top_uma[j]}" for i in range(1, 5) for j in range(i+1, 5)]
+            sanren_fuku_text = " / ".join(f_list)
+            # 三連単: 1着◎ -> 2着(○▲△1) -> 3着(○▲△1△2) (12点)
+            t_list = [f"{top_uma[0]}→{s}→{t}" for s in top_uma[1:4] for t in top_uma[1:5] if s != t]
+            sanren_tan_text = " / ".join(t_list)
+        else:
+            sanren_fuku_text = "出走数不足"
+            sanren_tan_text = "出走数不足"
+    except Exception:
+        sanren_fuku_text = "-"
+        sanren_tan_text = "-"
+
     venue_code = "ALL"
     if race_id_str and len(race_id_str) >= 6:
         venue_code = race_id_str[4:6]

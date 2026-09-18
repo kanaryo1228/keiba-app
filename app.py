@@ -1071,6 +1071,45 @@ def get_history_and_simulation():
 
     return "".join(history_html), win_rate, recovery_rate
 
+
+def generate_ai_commentary(df, race_name, venue_info, strategy="balanced"):
+    if df is None or df.empty:
+        return "出走馬データが取得できませんでした。"
+    
+    # 印で馬を抽出
+    top = df[df["mark"] == "◎"].iloc[0] if not df[df["mark"] == "◎"].empty else df.iloc[0]
+    sub = df[df["mark"] == "○"].iloc[0] if not df[df["mark"] == "○"].empty else (df.iloc[1] if len(df) > 1 else None)
+    ana = df[df["mark"].isin(["▲", "△"])].iloc[0] if not df[df["mark"].isin(["▲", "△"])].empty else None
+
+    # 本命馬の評価ポイント
+    top_reasons = []
+    if "sire" in top and top["sire"] not in ["血統分析中", ""]:
+        top_reasons.append(f"父{top['sire']}譲りのコース適性（評価: {top.get('blood_grade', 'B')}）")
+    if "bonus_tags" in top and top["bonus_tags"]:
+        top_reasons.append(f"『{top['bonus_tags']}』の好条件")
+    if "base_speed_idx" in top:
+        top_reasons.append(f"基礎指数トップクラスの実績値")
+    
+    top_desc = "、".join(top_reasons) if top_reasons else "総合指数の高さ"
+
+    p1 = f"【本命の根拠】\n本命に指名した{top['umaban']}番「{top['horse_name']}」は、{top_desc}を高く評価しました。"
+    if top.get("running_style"):
+        p1 += f" 脚質は「{top['running_style']}」で、このコースにおける展開バイアスにも合致しています。"
+
+    p2 = ""
+    if sub is not None:
+        p2 = f"\n\n【対抗・逆転候補】\n対抗の{sub['umaban']}番「{sub['horse_name']}」は安定した先行力とコース実績を保持しており、展開ひとつで首位争いに加わる有力候補です。"
+
+    p3 = ""
+    if ana is not None and ana["umaban"] != top["umaban"] and (sub is None or ana["umaban"] != sub["umaban"]):
+        ana_sire = f"（父: {ana['sire']}）" if "sire" in ana and ana["sire"] not in ["血統分析中", ""] else ""
+        p3 = f"\n\n【高配当の使者・穴の狙い目】\n単穴・惑星候補は{ana['umaban']}番「{ana['horse_name']}」{ana_sire}。人気薄ながら血統適性や枠順バイアスが味方しており、波乱を演出する可能性を秘めています。"
+
+    strategy_desc = "堅実な的中重視" if strategy == "safe" else ("高回収・穴狙い" if strategy == "recovery" else "的中と配当のバランス重視")
+    p4 = f"\n\n【戦略方針】\n今回は「{strategy_desc}」のロジックに基づき、期待値の高い組み合わせを中心に買い目を構築しています。"
+
+    return f"{p1}{p2}{p3}{p4}"
+
 def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: str = "", strategy: str = "balanced", current_url: str = ""):
     # 競馬場コード判定（IDの5〜6桁目、またはレース名・競馬場テキストから判定）
 

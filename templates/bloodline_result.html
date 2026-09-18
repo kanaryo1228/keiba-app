@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>血統診断カルテ - {{ res.sire }} × {{ res.bms }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 p-4 sm:p-8 font-sans min-h-screen flex items-center justify-center">
+    <div class="max-w-md w-full bg-slate-900 border border-amber-500/40 rounded-2xl p-6 shadow-2xl space-y-4">
+        <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+            <span class="text-xs text-amber-400 font-bold tracking-wider">🧬 新馬戦 血統カルテ診断結果</span>
+            <span class="text-xs bg-amber-400 text-slate-950 font-black px-2.5 py-0.5 rounded-full">{{ res.venue }}</span>
+        </div>
+        
+        <div class="text-center py-2">
+            <div class="text-xs text-slate-400 mb-1">配合総合評価</div>
+            <div class="text-2xl font-black text-amber-300">{{ res.overall_grade }}</div>
+            <div class="text-xs text-emerald-400 mt-1 font-bold">{{ res.venue_match }}</div>
+        </div>
+
+        <div class="space-y-3 bg-slate-950/80 p-4 rounded-xl border border-slate-800 text-xs">
+            <div>
+                <div class="text-slate-400 font-bold mb-0.5">父 (種牡馬): <span class="text-white text-sm">{{ res.sire }}</span> <span class="text-amber-400 font-mono">[{{ res.sire_rank }}ランク]</span></div>
+                <div class="text-slate-300 leading-relaxed">{{ res.sire_traits }}</div>
+                <div class="text-[11px] text-indigo-400 mt-1">得意競馬場: {{ res.best_venues }}</div>
+            </div>
+            <hr class="border-slate-800">
+            <div>
+                <div class="text-slate-400 font-bold mb-0.5">母父 (BMS): <span class="text-white text-sm">{{ res.bms or "未指定" }}</span> <span class="text-amber-400 font-mono">[{{ res.bms_rank }}ランク]</span></div>
+                <div class="text-slate-300 leading-relaxed">{{ res.bms_bonus }}</div>
+            </div>
+        </div>
+
+        <button onclick="window.close()" class="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs py-2 rounded-lg font-bold transition">
+            閉じる
+        </button>
+    </div>
+</body>
+</html>

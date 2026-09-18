@@ -1,3 +1,4 @@
+import bloodline_db
 import re
 import csv
 import io
@@ -11,6 +12,15 @@ from fastapi import FastAPI, Form, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 app = FastAPI()
+
+@app.post("/bloodline_search")
+async def bloodline_search(request: Request):
+    form = await request.form()
+    sire = form.get("sire", "").strip()
+    bms = form.get("bms", "").strip()
+    venue = form.get("venue", "大井").strip()
+    result = bloodline_db.analyze_bloodline_for_venue(sire, bms, venue)
+    return templates.TemplateResponse("bloodline_result.html", {"request": request, "res": result})
 
 TOP_JOCKEYS = [
     "笹川翼", "矢野貴", "御神本", "吉原寛", "森泰斗", "本田重", 
@@ -183,7 +193,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                     <h1 class="text-xl font-black tracking-wide text-emerald-400 flex items-center gap-2">
                         <span>🏇</span> KEIBA-AI PRO ⚡️ ULTRA
                     </h1>
-                    <span class="bg-amber-400 text-slate-950 text-xs font-black px-2.5 py-1 rounded-full shadow-lg ring-2 ring-amber-300">v2.4 ULTRA (三連系特化)</span>
+                    <span class="bg-amber-400 text-slate-950 text-xs font-black px-2.5 py-1 rounded-full shadow-lg ring-2 ring-amber-300">v2.5 ULTRA (三連系特化)</span>
                 </div>
                     <span>🏇</span> KEIBA-AI PRO ⚡️ ULTRA MAX
                 </h1>
@@ -214,7 +224,32 @@ HTML_CONTENT = """<!DOCTYPE html>
                         Index = {w_hana}·Hana + {w_weight}·(斤量/体重) + {w_paddock}·Pad + {w_jockey}·Joc + {w_bias}·Bias
                     </div>
                 </div>
-                <form method="post" action="/trigger-learn" class="self-end md:self-center">
+                
+    <!-- 新馬戦・全場対応 血統カルテ診断バー (v2.5) -->
+    <div class="mb-6 p-4 rounded-2xl bg-gradient-to-r from-amber-950/40 via-slate-900 to-indigo-950/50 border border-amber-500/40 shadow-xl">
+        <div class="flex items-center gap-2 mb-3">
+            <span class="text-xl">🧬</span>
+            <span class="text-sm font-bold text-amber-300">新馬戦・全競馬場別 血統適性カルテ診断 (v2.5)</span>
+            <span class="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded-full font-mono">南関4場・門別・JRA対応</span>
+        </div>
+        <form action="/bloodline_search" method="post" target="_blank" class="grid grid-cols-1 sm:grid-cols-4 gap-2">
+            <select name="venue" class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-400">
+                <option value="大井">大井競馬場</option>
+                <option value="川崎">川崎競馬場</option>
+                <option value="船橋">船橋競馬場</option>
+                <option value="浦和">浦和競馬場</option>
+                <option value="門別">門別競馬場</option>
+                <option value="東京">東京ダート</option>
+                <option value="中山">中山ダート</option>
+            </select>
+            <input type="text" name="sire" placeholder="父 (例: ヘニーヒューズ)" required class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-400">
+            <input type="text" name="bms" placeholder="母父 (例: サウスヴィグラス)" class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-400">
+            <button type="submit" class="bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold py-2 px-4 rounded-lg text-xs transition shadow-md flex items-center justify-center gap-1">
+                <span>🔍</span> 血統適性を診断
+            </button>
+        </form>
+    </div>
+<form method="post" action="/trigger-learn" class="self-end md:self-center">
                     <button type="submit" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-4 py-2 rounded-lg text-xs transition shadow-sm flex items-center gap-1.5">
                         <span>🔄</span> 全競馬場一括再学習
                     </button>
@@ -319,7 +354,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                         <div class="text-slate-800 font-bold">{bet_secondary}</div>
                         <div class="mt-4 p-4 rounded-xl bg-slate-900 border-2 border-amber-400 text-white shadow-xl">
     <div class="text-amber-400 font-black text-sm mb-3 flex items-center gap-2">
-        <span>🏆 AI厳選 三連系フォーメーション (v2.4)</span>
+        <span>🏆 AI厳選 三連系フォーメーション (v2.5)</span>
     </div>
     <div class="col-span-1 md:col-span-3 mt-4 space-y-3">
         <div class="bg-slate-950 p-3 rounded-lg border border-emerald-500/40">

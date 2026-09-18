@@ -1,4 +1,40 @@
 import bloodline_db
+
+_BLOOD_CACHE = {}
+
+def get_horse_bloodline_cached(horse_id: str):
+    """馬IDから父・母父を取得してキャッシュする"""
+    if not horse_id:
+        return "", ""
+    if horse_id in _BLOOD_CACHE:
+        return _BLOOD_CACHE[horse_id]
+    
+    url = f"https://db.netkeiba.com/horse/{horse_id}"
+    try:
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=3)
+        if r.status_code == 200:
+            sp = BeautifulSoup(r.content, "html.parser")
+            b_table = sp.select_one("table.blood_table")
+            if b_table:
+                tds = b_table.find_all("td")
+                # 血統表の1番目のtdが父、3代血統表の母父などを抽出
+                sire = tds[0].text.strip() if len(tds) > 0 else ""
+                # netkeiba血統表の母父位置(4段目・母の父)
+                bms = ""
+                for td in tds:
+                    if "td_bms" in td.get("class", []) or "母父" in td.text:
+                        bms = td.text.strip()
+                        break
+                if not bms and len(tds) >= 3:
+                    # 一般的な配置から母の父を推定
+                    bms = tds[2].text.strip()
+                _BLOOD_CACHE[horse_id] = (sire, bms)
+                return sire, bms
+    except Exception:
+        pass
+    _BLOOD_CACHE[horse_id] = ("", "")
+    return "", ""
+
 import re
 import csv
 import io
@@ -768,9 +804,11 @@ def parse_netkeiba_race(input_text: str):
                 # 2. テキスト全体からの正規表現抽出（「父：○○」「母父：○○」など）
                 row_raw_text = row.text
                 s_match = re.search(r"父[:：\s]*([^\s\(\)（）
-]+)", row_raw_text)
+
+]+)", row_raw_text)
                 b_match = re.search(r"(?:母父|BMS)[:：\s]*([^\s\(\)（）
-]+)", row_raw_text)
+
+]+)", row_raw_text)
                 
                 if s_match:
                     sire_name = s_match.group(1).strip()

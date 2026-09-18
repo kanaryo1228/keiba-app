@@ -900,7 +900,8 @@ def apply_custom_formula_bias(df: pd.DataFrame, bias_data: dict, weights: dict):
 
         # 新馬戦判定 & 血統ボーナス自動加算
         race_title_safe = locals().get("race_title", "") or locals().get("race_name", "") or ""
-        is_shinba_race = any(k in race_title_safe for k in ["新馬", "初出走", "2歳新馬", "メイクデビュー"])
+        race_name_val = str(locals().get("race_title", "") or locals().get("race_name", "") or "")
+        is_shinba_race = any(k in race_name_val for k in ["新馬", "初出走", "2歳新馬", "メイクデビュー"])
         b_score = row.get("blood_score", 0.0)
         if is_shinba_race:
             # 新馬戦は過去走タイムがないため、血統適性を主軸（高ウェイト）に反映

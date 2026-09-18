@@ -873,6 +873,7 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
                     f_chips.append(f"""<div class='flex items-center gap-1 bg-slate-900 px-2 py-1 rounded border border-emerald-500/40 text-xs font-mono font-bold shadow-sm'><span class='w-5 h-5 flex items-center justify-center bg-emerald-500 text-slate-950 rounded-full font-black'>{top_uma[0]}</span><span class='text-slate-500'>-</span><span class='w-5 h-5 flex items-center justify-center bg-slate-800 text-emerald-300 rounded border border-slate-700'>{top_uma[i]}</span><span class='text-slate-500'>-</span><span class='w-5 h-5 flex items-center justify-center bg-slate-800 text-emerald-300 rounded border border-slate-700'>{top_uma[j]}</span></div>""")
             sanren_fuku_text = "".join(f_chips)
             bet_sanrenpuku = " | ".join([f"{top_uma[0]}-{top_uma[i]}-{top_uma[j]}" for i in range(1, 5) for j in range(i+1, 5)])
+            bet_sanrenpuku = " | ".join([f"{top_uma[0]}-{top_uma[i]}-{top_uma[j]}" for i in range(1, 5) for j in range(i+1, 5)])
 
             # 三連単: 1着◎ -> 2着(○▲△1) -> 3着(○▲△1△2) (12点)
             t_chips = []
@@ -881,6 +882,7 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
                     if s != t:
                         t_chips.append(f"""<div class='flex items-center gap-1 bg-slate-900 px-2 py-1 rounded border border-rose-500/40 text-xs font-mono font-bold shadow-sm'><span class='w-5 h-5 flex items-center justify-center bg-rose-500 text-white rounded-full font-black'>{top_uma[0]}</span><span class='text-rose-400'>→</span><span class='w-5 h-5 flex items-center justify-center bg-slate-800 text-amber-300 rounded border border-slate-700'>{s}</span><span class='text-rose-400'>→</span><span class='w-5 h-5 flex items-center justify-center bg-slate-800 text-rose-300 rounded border border-slate-700'>{t}</span></div>""")
             sanren_tan_text = "".join(t_chips)
+            bet_sanrentan = " | ".join([f"{top_uma[0]}→{s}→{t}" for s in top_uma[1:4] for t in top_uma[1:5] if s != t])
             bet_sanrentan = " | ".join([f"{top_uma[0]}→{s}→{t}" for s in top_uma[1:4] for t in top_uma[1:5] if s != t])
         else:
             sanren_fuku_text = "出走数不足"

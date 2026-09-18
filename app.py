@@ -758,6 +758,37 @@ def parse_netkeiba_race(input_text: str):
                     w_val = int(m.group(1))
                     diff = int(m.group(2))
                     horse_body_weight = w_val
+
+            # --- 血統（父・母父）抽出エンジン強化 ---
+            sire_name = ""
+            bms_name = ""
+            try:
+                # 1. リンクからの抽出（馬詳細リンク以外に血統リンクが存在する場合）
+                ped_links = [a.text.strip() for a in row.find_all("a") if a.text.strip() and a.text.strip() != horse_name and not a.text.strip().isdigit()]
+                # 2. テキスト全体からの正規表現抽出（「父：○○」「母父：○○」など）
+                row_raw_text = row.text
+                s_match = re.search(r"父[:：\s]*([^\s\(\)（）
+]+)", row_raw_text)
+                b_match = re.search(r"(?:母父|BMS)[:：\s]*([^\s\(\)（）
+]+)", row_raw_text)
+                
+                if s_match:
+                    sire_name = s_match.group(1).strip()
+                elif len(ped_links) >= 1:
+                    sire_name = ped_links[0]
+
+                if b_match:
+                    bms_name = b_match.group(1).strip()
+                elif len(ped_links) >= 2:
+                    bms_name = ped_links[1]
+            except Exception:
+                pass
+
+            b_res = bloodline_db.analyze_bloodline_for_venue(sire_name, bms_name, venue)
+            blood_score = b_res.get("score", 0.0)
+            blood_grade = b_res.get("overall_grade", "B")
+            blood_traits = b_res.get("sire_traits", "")
+            bms_bonus_desc = b_res.get("bms_bonus", "")
                     horse_weight_text = f"{w_val}({diff:+d})"
                     if diff >= 14:
                         paddock_sign = "太め注意"

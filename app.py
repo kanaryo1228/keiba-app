@@ -1,5 +1,4 @@
 import bloodline_db
-
 _BLOOD_CACHE = {}
 
 def get_horse_bloodline_cached(horse_id: str):
@@ -7,34 +6,16 @@ def get_horse_bloodline_cached(horse_id: str):
         return "", ""
     if horse_id in _BLOOD_CACHE:
         return _BLOOD_CACHE[horse_id]
-    
-    # 血統専用ページを取得
-    url = f"https://db.netkeiba.com/horse/ped/{horse_id}/"
     try:
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=4)
+        url = f"https://db.netkeiba.com/horse/ped/{horse_id}/"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}, timeout=2.5)
         if r.status_code == 200:
             sp = BeautifulSoup(r.content, "html.parser")
-            b_table = sp.select_one("table.blood_table")
-            if b_table:
-                tds = b_table.find_all("td")
-                # 5代血統表: 0番目のtdが「父」、母父(母の父)は3代目の位置
-                sire = ""
-                bms = ""
-                # aタグのテキストから種牡馬名を抽出
-                links = [a.text.strip() for a in b_table.find_all("a") if a.text.strip()]
-                if len(links) >= 1:
-                    sire = links[0]
-                # 母父（母の父）を血統表構造から探索
-                for td in tds:
-                    if "母父" in td.text or "BMS" in td.text:
-                        a_in = td.find("a")
-                        bms = a_in.text.strip() if a_in else td.text.strip()
-                        break
-                if not bms and len(links) >= 3:
-                    bms = links[2]
-                
-                _BLOOD_CACHE[horse_id] = (sire, bms)
-                return sire, bms
+            as_ = [a.text.strip() for a in sp.select("table.blood_table a") if a.text.strip() and a.text.strip() not in ["血統", "産駒"]]
+            sire = as_[0] if len(as_) >= 1 else ""
+            bms = as_[3] if len(as_) >= 4 else (as_[1] if len(as_) >= 2 else "")
+            _BLOOD_CACHE[horse_id] = (sire, bms)
+            return sire, bms
     except Exception:
         pass
     _BLOOD_CACHE[horse_id] = ("", "")
@@ -811,32 +792,66 @@ def parse_netkeiba_race(input_text: str):
                         paddock_score = +1.0
                     break
 
-            # --- 血統（父・母父）抽出エンジン ---
+            running_style = "自在"
+            hana_score = 40.0
+            past_jockey = ""
+            past_cells = row.find_all(class_=re.compile(r"Past|past|Zen|Result"))
+            past_summary = "前走: データ集計中"
+            
+            if past_cells:
+                past_text = past_cells[0].text.strip()
+                rank_m = re.search(r"(\d{1,2})着", past_text)
+                if rank_m:
+                    past_summary = f"前走: {rank_m.group(1)}着"
+                
+                corner_m = re.search(r"(\d{1,2})-(\d{1,2})", past_text)
+                if corner_m:
+                    first_pos = int(corner_m.group(1))
+                    if first_pos == 1:
+                        running_style = "逃げ"
+                        hana_score = 85.0
+                    elif first_pos <= 3:
+                        running_style = "先行"
+                        hana_score = 65.0
+                    elif first_pos >= 8:
+                        running_style = "追込"
+                        hana_score = 15.0
+                    else:
+                        running_style = "差し"
+                        hana_score = 30.0
+
+                for tj in TOP_JOCKEYS:
+                    if tj in past_text:
+                        past_jockey = tj
+                        break
+
+            if waku in [1, 2]:
+                hana_score += 10.0
+
+            is_jockey_upgrade = False
+            current_is_top = any(tj in jockey for tj in TOP_JOCKEYS)
+            if current_is_top and (not past_jockey or past_jockey not in TOP_JOCKEYS):
+                is_jockey_upgrade = True
+
+            base_speed = 80.0
+            if "1着" in past_summary:
+                base_speed += 3.5
+            elif "2着" in past_summary or "3着" in past_summary:
+                base_speed += 1.8
+            elif "着外" in past_summary or "8着" in past_summary:
+                base_speed -= 1.5
+
+                        # 血統取得と適性評価
             sire_name = ""
             bms_name = ""
             try:
                 m_hid = re.search(r"/(?:horse|ped)/([0-9a-zA-Z]{10})", str(row)) or re.search(r"ketto_num=([0-9a-zA-Z]{10})", str(row))
                 if m_hid:
-                    h_id = m_hid.group(1)
-                    if h_id in _BLOOD_CACHE:
-                        sire_name, bms_name = _BLOOD_CACHE[h_id]
-                    else:
-                        ped_url = f"https://db.netkeiba.com/horse/ped/{h_id}/"
-                        pr = requests.get(ped_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=3)
-                        if pr.status_code == 200:
-                            psp = BeautifulSoup(pr.content, "html.parser")
-                            ped_as = [a.text.strip() for a in psp.select("table.blood_table a") if a.text.strip() and a.text.strip() not in ["血統", "産駒"]]
-                            if len(ped_as) >= 1:
-                                sire_name = ped_as[0]
-                            if len(ped_as) >= 4:
-                                bms_name = ped_as[3]
-                            elif len(ped_as) >= 2:
-                                bms_name = ped_as[1]
-                        _BLOOD_CACHE[h_id] = (sire_name, bms_name)
+                    sire_name, bms_name = get_horse_bloodline_cached(m_hid.group(1))
             except Exception:
                 pass
 
-            b_res = bloodline_db.analyze_bloodline_for_venue(sire_name, bms_name, venue)
+            b_res = bloodline_db.analyze_bloodline_for_venue(sire_name, bms_name, venue if "venue" in locals() else "")
             blood_score = b_res.get("score", 0.0)
             blood_grade = b_res.get("overall_grade", "B")
             blood_traits = b_res.get("sire_traits", "")
@@ -851,6 +866,12 @@ def parse_netkeiba_race(input_text: str):
                 "horse_body_weight": horse_body_weight,
                 "odds": odds,
                 "horse_weight_text": horse_weight_text,
+                "sire": sire_name if sire_name else "血統分析中",
+                "bms": bms_name if bms_name else "標準適性",
+                "blood_score": blood_score,
+                "blood_grade": blood_grade,
+                "blood_traits": blood_traits,
+                "bms_bonus": bms_bonus_desc,
                 "paddock_sign": paddock_sign,
                 "paddock_score": paddock_score,
                 "running_style": running_style,
@@ -858,13 +879,7 @@ def parse_netkeiba_race(input_text: str):
                 "is_jockey_upgrade": is_jockey_upgrade,
                 "is_top_jockey": 1 if current_is_top else 0,
                 "past_summary": past_summary,
-                "base_speed_idx": base_speed,
-                "sire": sire_name if sire_name else "血統分析中",
-                "bms": bms_name if bms_name else "標準適性",
-                "blood_score": blood_score,
-                "blood_grade": blood_grade,
-                "blood_traits": blood_traits,
-                "bms_bonus": bms_bonus_desc
+                "base_speed_idx": base_speed
             })
         except Exception:
             continue

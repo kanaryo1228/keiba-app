@@ -181,11 +181,11 @@ HTML_CONTENT = """<!DOCTYPE html>
             <div>
                 <div class="flex items-center gap-2">
                     <h1 class="text-xl font-black tracking-wide text-emerald-400 flex items-center gap-2">
-                        <span>🏇</span> KEIBA-AI PRO
+                        <span>🏇</span> KEIBA-AI PRO ⚡️ ULTRA
                     </h1>
-                    <span class="bg-emerald-500/20 border border-emerald-400 text-emerald-300 text-[10px] font-black px-1.5 py-0.5 rounded">v2.1</span>
+                    <span class="bg-amber-400 text-slate-950 text-xs font-black px-2.5 py-1 rounded-full shadow-lg ring-2 ring-amber-300">v2.2 ULTRA (三連系特化)</span>
                 </div>
-                    <span>🏇</span> KEIBA-AI PRO MAX
+                    <span>🏇</span> KEIBA-AI PRO ⚡️ ULTRA MAX
                 </h1>
                 <p class="text-xs text-slate-400">競馬場別マルチモデル自律学習 & 独自指数関数エンジン</p>
             </div>
@@ -317,7 +317,21 @@ HTML_CONTENT = """<!DOCTYPE html>
                     <div class="bg-white/90 rounded-lg p-3 border border-amber-200 shadow-sm">
                         <div class="font-bold text-slate-600 mb-1">【連系推奨】</div>
                         <div class="text-slate-800 font-bold">{bet_secondary}</div>
-                        <div class="text-amber-900 font-extrabold mt-1">三連複: {bet_sanrenpuku}</div>
+                        <div class="mt-4 p-4 rounded-xl bg-slate-900 border-2 border-amber-400 text-white shadow-xl">
+    <div class="text-amber-400 font-black text-sm mb-3 flex items-center gap-2">
+        <span>🏆 AI厳選 三連系フォーメーション (v2.2)</span>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+        <div class="bg-slate-950 p-3 rounded-lg border border-emerald-500/40">
+            <div class="text-emerald-400 font-bold mb-1">【三連複 軸1頭流し】(6点)</div>
+            <div class="font-mono text-emerald-300 bg-slate-900 p-2 rounded leading-relaxed">{bet_sanrenpuku}</div>
+        </div>
+        <div class="bg-slate-950 p-3 rounded-lg border border-rose-500/40">
+            <div class="text-rose-400 font-bold mb-1">【三連単 ◎1着固定】(12点)</div>
+            <div class="font-mono text-rose-300 bg-slate-900 p-2 rounded leading-relaxed max-h-24 overflow-y-auto">{bet_sanrentan}</div>
+        </div>
+    </div>
+</div>
                     </div>
                     <div class="bg-white/90 rounded-lg p-3 border border-amber-200 shadow-sm">
                         <div class="font-bold text-slate-600 mb-1">【波乱狙い】</div>

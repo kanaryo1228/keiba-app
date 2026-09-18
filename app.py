@@ -799,12 +799,22 @@ def parse_netkeiba_race(input_text: str):
                     w_val = int(m.group(1))
                     diff = int(m.group(2))
                     horse_body_weight = w_val
+                    horse_weight_text = f"{w_val}({diff:+d})"
+                    if diff >= 14:
+                        paddock_sign = "太め注意"
+                        paddock_score = -2.0
+                    elif diff <= -12:
+                        paddock_sign = "大幅減"
+                        paddock_score = -2.2
+                    elif -4 <= diff <= +4:
+                        paddock_sign = "仕上がり良好"
+                        paddock_score = +1.0
+                    break
 
             # --- 血統（父・母父）抽出エンジン ---
             sire_name = ""
             bms_name = ""
             try:
-                # 馬IDリンク（/horse/1234567890/ や ketto_num=...）から特定
                 m_hid = re.search(r"/(?:horse|ped)/([0-9a-zA-Z]{10})", str(row)) or re.search(r"ketto_num=([0-9a-zA-Z]{10})", str(row))
                 if m_hid:
                     h_id = m_hid.group(1)
@@ -818,7 +828,6 @@ def parse_netkeiba_race(input_text: str):
                             ped_as = [a.text.strip() for a in psp.select("table.blood_table a") if a.text.strip() and a.text.strip() not in ["血統", "産駒"]]
                             if len(ped_as) >= 1:
                                 sire_name = ped_as[0]
-                            # 母父 (3代血統表の母父位置)
                             if len(ped_as) >= 4:
                                 bms_name = ped_as[3]
                             elif len(ped_as) >= 2:
@@ -826,71 +835,12 @@ def parse_netkeiba_race(input_text: str):
                         _BLOOD_CACHE[h_id] = (sire_name, bms_name)
             except Exception:
                 pass
+
             b_res = bloodline_db.analyze_bloodline_for_venue(sire_name, bms_name, venue)
             blood_score = b_res.get("score", 0.0)
             blood_grade = b_res.get("overall_grade", "B")
             blood_traits = b_res.get("sire_traits", "")
             bms_bonus_desc = b_res.get("bms_bonus", "")
-                    horse_weight_text = f"{w_val}({diff:+d})"
-                    if diff >= 14:
-                        paddock_sign = "太め注意"
-                        paddock_score = -2.0
-                    elif diff <= -12:
-                        paddock_sign = "大幅減"
-                        paddock_score = -2.2
-                    elif -4 <= diff <= +4:
-                        paddock_sign = "仕上がり良好"
-                        paddock_score = +1.0
-                    break
-
-            running_style = "自在"
-            hana_score = 40.0
-            past_jockey = ""
-            past_cells = row.find_all(class_=re.compile(r"Past|past|Zen|Result"))
-            past_summary = "前走: データ集計中"
-            
-            if past_cells:
-                past_text = past_cells[0].text.strip()
-                rank_m = re.search(r"(\d{1,2})着", past_text)
-                if rank_m:
-                    past_summary = f"前走: {rank_m.group(1)}着"
-                
-                corner_m = re.search(r"(\d{1,2})-(\d{1,2})", past_text)
-                if corner_m:
-                    first_pos = int(corner_m.group(1))
-                    if first_pos == 1:
-                        running_style = "逃げ"
-                        hana_score = 85.0
-                    elif first_pos <= 3:
-                        running_style = "先行"
-                        hana_score = 65.0
-                    elif first_pos >= 8:
-                        running_style = "追込"
-                        hana_score = 15.0
-                    else:
-                        running_style = "差し"
-                        hana_score = 30.0
-
-                for tj in TOP_JOCKEYS:
-                    if tj in past_text:
-                        past_jockey = tj
-                        break
-
-            if waku in [1, 2]:
-                hana_score += 10.0
-
-            is_jockey_upgrade = False
-            current_is_top = any(tj in jockey for tj in TOP_JOCKEYS)
-            if current_is_top and (not past_jockey or past_jockey not in TOP_JOCKEYS):
-                is_jockey_upgrade = True
-
-            base_speed = 80.0
-            if "1着" in past_summary:
-                base_speed += 3.5
-            elif "2着" in past_summary or "3着" in past_summary:
-                base_speed += 1.8
-            elif "着外" in past_summary or "8着" in past_summary:
-                base_speed -= 1.5
 
             horses.append({
                 "waku": waku,

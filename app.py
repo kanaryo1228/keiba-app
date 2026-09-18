@@ -1323,41 +1323,9 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
 
     history_rows, win_rate, recovery_rate = get_history_and_simulation()
 
-    return HTML_CONTENT.format(
-        table_rows="".join(rows_html),
-        ana_horses=ana_horses,
-        honmei=honmei,
-        bet_primary=bet_primary,
-        bet_primary_sub=bet_primary_sub,
-        bet_secondary=bet_secondary,
-        bet_sanrenpuku=bet_sanrenpuku,
-        bet_sanrentan=bet_sanrentan,
-        bet_note=bet_note,
-        race_name=race_name,
-        venue_info=venue_info,
-        bias_race_count_text=f"直前{bias_data['race_count']}R解析済" if bias_data['race_count'] > 0 else "初期待機中",
-        bias_summary_headline=bias_data["headline"],
-        bias_detail_text=bias_data["detail"],
-        inner_waku_rate=bias_data["inner_rate"],
-        front_rate=bias_data["front_rate"],
-        pace_analysis_comment=f"{v_name}コースの好走実績データに最適化済み",
-        strategy_title=strategy_title,
-        strategy_badge=strategy_badge,
-        venue_model_title=venue_model_title,
-        venue_sample_count=sample_count,
-        w_hana=f"{weights.get('w_hana', 2.2):+.2f}",
-        w_weight=f"{weights.get('w_weight_ratio', -15.0):+.1f}",
-        w_paddock=f"{weights.get('w_paddock', 1.2):+.2f}",
-        w_jockey=f"{weights.get('w_jockey', 1.8):+.2f}",
-        w_bias=f"{weights.get('w_bias', 1.5):+.2f}",
-        sel_strat_bal="selected" if strategy == "balanced" else "",
-        sel_strat_safe="selected" if strategy == "safe" else "",
-        sel_strat_agg="selected" if strategy == "aggressive" else "",
-        current_url=current_url,
-        history_rows=history_rows,
-        sim_win_rate=win_rate,
-        sim_recovery_rate=recovery_rate
-    )
+    # AI解説テキストの生成
+    ai_comm = ""
+    
 
 @app.get("/", response_class=HTMLResponse)
 def index():
@@ -1366,15 +1334,39 @@ def index():
 
 @app.post("/fetch", response_class=HTMLResponse)
 def fetch_race(race_url: str = Form(...), strategy: str = Form("balanced")):
-    if not race_url.strip():
+    clean_url = race_url.strip() if race_url else ""
+    if not clean_url:
         df, race_name, venue_info, race_id_str = get_default_nar_data()
-        return build_view(df, race_name, venue_info, race_id_str=race_id_str, strategy=strategy)
-    
-    df, race_name, venue_info, race_id_str = parse_netkeiba_race(race_url.strip())
-    if df is None:
-        df, race_name, venue_info, race_id_str = get_default_nar_data()
-        race_name = f"【取得エラー: サンプル表示中】{race_name}"
-    return build_view(df, race_name, venue_info, race_id_str=race_id_str, strategy=strategy, current_url=race_url)
+        raw_res = build_view(df, race_name, venue_info, race_id_str=race_id_str, strategy=strategy)
+    else:
+        df, race_name, venue_info, race_id_str = parse_netkeiba_race(clean_url)
+        if df is None:
+            df, race_name, venue_info, race_id_str = get_default_nar_data()
+            race_name = f"【取得エラー：サンプル表示中】{race_name}"
+            raw_res = build_view(df, race_name, venue_info, race_id_str=race_id_str, strategy=strategy, current_url=clean_url)
+        else:
+            raw_res = build_view(df, race_name, venue_info, race_id_str=race_id_str, strategy=strategy, current_url=clean_url)
+
+    # AI解説カードの安全な注入
+    try:
+        ai_comm = generate_ai_commentary(df, race_name, venue_info, strategy)
+        card = f"""
+        <div style="margin: 28px auto; max-width: 1000px; padding: 24px; background: #ffffff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); border-left: 6px solid #2563eb; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">
+            <div style="font-size: 1.15rem; font-weight: bold; color: #1e293b; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 1.3rem;">🧠</span> AIレース展開・血統・選定理由の解説
+            </div>
+            <div style="font-size: 0.95rem; line-height: 1.8; color: #334155; white-space: pre-wrap; background: #f8fafc; padding: 18px; border-radius: 8px; border: 1px solid #e2e8f0;">{ai_comm}</div>
+        </div>
+        """
+        html_text = str(raw_res)
+        if "</body>" in html_text:
+            raw_res = html_text.replace("</body>", card + "</body>")
+        else:
+            raw_res = html_text + card
+    except Exception as e:
+        print(f"[Commentary Error] {e}")
+
+    return HTMLResponse(content=raw_res)
 
 @app.post("/trigger-learn")
 def trigger_learn():

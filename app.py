@@ -3,31 +3,36 @@ import bloodline_db
 _BLOOD_CACHE = {}
 
 def get_horse_bloodline_cached(horse_id: str):
-    """馬IDから父・母父を取得してキャッシュする"""
     if not horse_id:
         return "", ""
     if horse_id in _BLOOD_CACHE:
         return _BLOOD_CACHE[horse_id]
     
-    url = f"https://db.netkeiba.com/horse/{horse_id}"
+    # 血統専用ページを取得
+    url = f"https://db.netkeiba.com/horse/ped/{horse_id}/"
     try:
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=3)
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=4)
         if r.status_code == 200:
             sp = BeautifulSoup(r.content, "html.parser")
             b_table = sp.select_one("table.blood_table")
             if b_table:
                 tds = b_table.find_all("td")
-                # 血統表の1番目のtdが父、3代血統表の母父などを抽出
-                sire = tds[0].text.strip() if len(tds) > 0 else ""
-                # netkeiba血統表の母父位置(4段目・母の父)
+                # 5代血統表: 0番目のtdが「父」、母父(母の父)は3代目の位置
+                sire = ""
                 bms = ""
+                # aタグのテキストから種牡馬名を抽出
+                links = [a.text.strip() for a in b_table.find_all("a") if a.text.strip()]
+                if len(links) >= 1:
+                    sire = links[0]
+                # 母父（母の父）を血統表構造から探索
                 for td in tds:
-                    if "td_bms" in td.get("class", []) or "母父" in td.text:
-                        bms = td.text.strip()
+                    if "母父" in td.text or "BMS" in td.text:
+                        a_in = td.find("a")
+                        bms = a_in.text.strip() if a_in else td.text.strip()
                         break
-                if not bms and len(tds) >= 3:
-                    # 一般的な配置から母の父を推定
-                    bms = tds[2].text.strip()
+                if not bms and len(links) >= 3:
+                    bms = links[2]
+                
                 _BLOOD_CACHE[horse_id] = (sire, bms)
                 return sire, bms
     except Exception:
@@ -795,33 +800,32 @@ def parse_netkeiba_race(input_text: str):
                     diff = int(m.group(2))
                     horse_body_weight = w_val
 
-            # --- 血統（父・母父）抽出エンジン強化 ---
+            # --- 血統（父・母父）抽出エンジン ---
             sire_name = ""
             bms_name = ""
             try:
-                # 1. リンクからの抽出（馬詳細リンク以外に血統リンクが存在する場合）
-                ped_links = [a.text.strip() for a in row.find_all("a") if a.text.strip() and a.text.strip() != horse_name and not a.text.strip().isdigit()]
-                # 2. テキスト全体からの正規表現抽出（「父：○○」「母父：○○」など）
-                row_raw_text = row.text
-                s_match = re.search(r"父[:：\s]*([^\s\(\)（）
-
-]+)", row_raw_text)
-                b_match = re.search(r"(?:母父|BMS)[:：\s]*([^\s\(\)（）
-
-]+)", row_raw_text)
-                
-                if s_match:
-                    sire_name = s_match.group(1).strip()
-                elif len(ped_links) >= 1:
-                    sire_name = ped_links[0]
-
-                if b_match:
-                    bms_name = b_match.group(1).strip()
-                elif len(ped_links) >= 2:
-                    bms_name = ped_links[1]
+                # 馬IDリンク（/horse/1234567890/ や ketto_num=...）から特定
+                m_hid = re.search(r"/(?:horse|ped)/([0-9a-zA-Z]{10})", str(row)) or re.search(r"ketto_num=([0-9a-zA-Z]{10})", str(row))
+                if m_hid:
+                    h_id = m_hid.group(1)
+                    if h_id in _BLOOD_CACHE:
+                        sire_name, bms_name = _BLOOD_CACHE[h_id]
+                    else:
+                        ped_url = f"https://db.netkeiba.com/horse/ped/{h_id}/"
+                        pr = requests.get(ped_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=3)
+                        if pr.status_code == 200:
+                            psp = BeautifulSoup(pr.content, "html.parser")
+                            ped_as = [a.text.strip() for a in psp.select("table.blood_table a") if a.text.strip() and a.text.strip() not in ["血統", "産駒"]]
+                            if len(ped_as) >= 1:
+                                sire_name = ped_as[0]
+                            # 母父 (3代血統表の母父位置)
+                            if len(ped_as) >= 4:
+                                bms_name = ped_as[3]
+                            elif len(ped_as) >= 2:
+                                bms_name = ped_as[1]
+                        _BLOOD_CACHE[h_id] = (sire_name, bms_name)
             except Exception:
                 pass
-
             b_res = bloodline_db.analyze_bloodline_for_venue(sire_name, bms_name, venue)
             blood_score = b_res.get("score", 0.0)
             blood_grade = b_res.get("overall_grade", "B")

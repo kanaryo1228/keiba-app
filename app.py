@@ -183,7 +183,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                     <h1 class="text-xl font-black tracking-wide text-emerald-400 flex items-center gap-2">
                         <span>🏇</span> KEIBA-AI PRO ⚡️ ULTRA
                     </h1>
-                    <span class="bg-amber-400 text-slate-950 text-xs font-black px-2.5 py-1 rounded-full shadow-lg ring-2 ring-amber-300">v2.3 ULTRA (三連系特化)</span>
+                    <span class="bg-amber-400 text-slate-950 text-xs font-black px-2.5 py-1 rounded-full shadow-lg ring-2 ring-amber-300">v2.4 ULTRA (三連系特化)</span>
                 </div>
                     <span>🏇</span> KEIBA-AI PRO ⚡️ ULTRA MAX
                 </h1>
@@ -319,9 +319,9 @@ HTML_CONTENT = """<!DOCTYPE html>
                         <div class="text-slate-800 font-bold">{bet_secondary}</div>
                         <div class="mt-4 p-4 rounded-xl bg-slate-900 border-2 border-amber-400 text-white shadow-xl">
     <div class="text-amber-400 font-black text-sm mb-3 flex items-center gap-2">
-        <span>🏆 AI厳選 三連系フォーメーション (v2.3)</span>
+        <span>🏆 AI厳選 三連系フォーメーション (v2.4)</span>
     </div>
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+    <div class="col-span-1 md:col-span-3 mt-4 space-y-3">
         <div class="bg-slate-950 p-3 rounded-lg border border-emerald-500/40">
             <div class="text-emerald-400 font-bold mb-1">【三連複 軸1頭流し】(6点)</div>
             <div class="flex flex-wrap gap-2 p-2 bg-slate-950/60 rounded-lg">{bet_sanrenpuku}</div>
@@ -872,6 +872,7 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
                 for j in range(i+1, 5):
                     f_chips.append(f"""<div class='flex items-center gap-1 bg-slate-900 px-2 py-1 rounded border border-emerald-500/40 text-xs font-mono font-bold shadow-sm'><span class='w-5 h-5 flex items-center justify-center bg-emerald-500 text-slate-950 rounded-full font-black'>{top_uma[0]}</span><span class='text-slate-500'>-</span><span class='w-5 h-5 flex items-center justify-center bg-slate-800 text-emerald-300 rounded border border-slate-700'>{top_uma[i]}</span><span class='text-slate-500'>-</span><span class='w-5 h-5 flex items-center justify-center bg-slate-800 text-emerald-300 rounded border border-slate-700'>{top_uma[j]}</span></div>""")
             sanren_fuku_text = "".join(f_chips)
+            bet_sanrenpuku = " | ".join([f"{top_uma[0]}-{top_uma[i]}-{top_uma[j]}" for i in range(1, 5) for j in range(i+1, 5)])
 
             # 三連単: 1着◎ -> 2着(○▲△1) -> 3着(○▲△1△2) (12点)
             t_chips = []
@@ -880,6 +881,7 @@ def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: s
                     if s != t:
                         t_chips.append(f"""<div class='flex items-center gap-1 bg-slate-900 px-2 py-1 rounded border border-rose-500/40 text-xs font-mono font-bold shadow-sm'><span class='w-5 h-5 flex items-center justify-center bg-rose-500 text-white rounded-full font-black'>{top_uma[0]}</span><span class='text-rose-400'>→</span><span class='w-5 h-5 flex items-center justify-center bg-slate-800 text-amber-300 rounded border border-slate-700'>{s}</span><span class='text-rose-400'>→</span><span class='w-5 h-5 flex items-center justify-center bg-slate-800 text-rose-300 rounded border border-slate-700'>{t}</span></div>""")
             sanren_tan_text = "".join(t_chips)
+            bet_sanrentan = " | ".join([f"{top_uma[0]}→{s}→{t}" for s in top_uma[1:4] for t in top_uma[1:5] if s != t])
         else:
             sanren_fuku_text = "出走数不足"
             sanren_tan_text = "出走数不足"

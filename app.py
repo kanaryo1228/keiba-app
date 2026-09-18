@@ -585,6 +585,14 @@ HTML_CONTENT = """<!DOCTYPE html>
 </div>
 <script src="/static/modal.js"></script>
 
+
+    <!-- AI展開・血統解説カード -->
+    <div style="margin: 24px auto; max-width: 960px; padding: 22px; background: #ffffff; border-radius: 12px; box-shadow: 0 4px 14px rgba(0,0,0,0.07); border-left: 6px solid #2563eb; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">
+        <div style="font-size: 1.15rem; font-weight: bold; color: #1e293b; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 1.3rem;">🧠</span> AIレース展開・血統・選定理由の解説
+        </div>
+        <div style="font-size: 0.95rem; line-height: 1.8; color: #334155; white-space: pre-wrap; background: #f8fafc; padding: 16px; border-radius: 8px; border: 1px solid #e2e8f0;">{ai_commentary}</div>
+    </div>
 </body>
 </html>
 """
@@ -1111,6 +1119,7 @@ def generate_ai_commentary(df, race_name, venue_info, strategy="balanced"):
     return f"{p1}{p2}{p3}{p4}"
 
 def build_view(df: pd.DataFrame, race_name: str, venue_info: str, race_id_str: str = "", strategy: str = "balanced", current_url: str = ""):
+    ai_commentary = generate_ai_commentary(df, race_name, venue_info, strategy)
     # 競馬場コード判定（IDの5〜6桁目、またはレース名・競馬場テキストから判定）
 
     # 三連系自動生成

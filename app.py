@@ -13,6 +13,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 app = FastAPI()
 
+from fastapi.staticfiles import StaticFiles
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 @app.api_route("/bloodline_search", methods=["GET", "POST"], response_class=HTMLResponse)
 async def bloodline_search(request: Request, venue: str = "大井", sire: str = "", bms: str = ""):
     if request.method == "POST":
@@ -64,6 +67,40 @@ async def bloodline_search(request: Request, venue: str = "大井", sire: str = 
             閉じる
         </button>
     </div>
+
+<!-- 馬詳細・血統モーダル -->
+<div id="horseDetailModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-amber-500/50 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+        <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+            <div>
+                <span id="mUmaban" class="text-xs bg-amber-400 text-slate-950 font-black px-2 py-0.5 rounded mr-2"></span>
+                <span id="mName" class="text-base font-black text-white"></span>
+            </div>
+            <button onclick="closeHorseModal()" class="text-slate-400 hover:text-white text-xl font-bold">&times;</button>
+        </div>
+        <div class="space-y-3 text-xs">
+            <div class="bg-slate-950 p-3 rounded-xl border border-slate-800 flex justify-between items-center">
+                <span class="text-slate-400">血統・舞台適性ランク:</span>
+                <span id="mGrade" class="text-amber-300 font-black text-base"></span>
+            </div>
+            <div class="space-y-2 bg-slate-950/60 p-3 rounded-xl border border-slate-800">
+                <div>
+                    <span class="text-slate-400 font-bold">父: </span><span id="mSire" class="text-white font-bold"></span>
+                    <p id="mTraits" class="text-slate-400 text-[11px] mt-0.5 leading-relaxed"></p>
+                </div>
+                <hr class="border-slate-800">
+                <div>
+                    <span class="text-slate-400 font-bold">母父: </span><span id="mBms" class="text-white font-bold"></span>
+                    <p id="mBonus" class="text-slate-400 text-[11px] mt-0.5 leading-relaxed"></p>
+                </div>
+            </div>
+            <div id="mTip" class="p-2.5 rounded-lg bg-indigo-950/50 border border-indigo-500/30 text-indigo-300 text-[11px] leading-relaxed"></div>
+        </div>
+        <button onclick="closeHorseModal()" class="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs py-2.5 rounded-lg font-bold transition">閉じる</button>
+    </div>
+</div>
+<script src="/static/modal.js"></script>
+
 </body>
 </html>"""
     return HTMLResponse(content=html)
@@ -492,6 +529,40 @@ HTML_CONTENT = """<!DOCTYPE html>
             </div>
         </div>
     </main>
+
+<!-- 馬詳細・血統モーダル -->
+<div id="horseDetailModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-amber-500/50 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+        <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+            <div>
+                <span id="mUmaban" class="text-xs bg-amber-400 text-slate-950 font-black px-2 py-0.5 rounded mr-2"></span>
+                <span id="mName" class="text-base font-black text-white"></span>
+            </div>
+            <button onclick="closeHorseModal()" class="text-slate-400 hover:text-white text-xl font-bold">&times;</button>
+        </div>
+        <div class="space-y-3 text-xs">
+            <div class="bg-slate-950 p-3 rounded-xl border border-slate-800 flex justify-between items-center">
+                <span class="text-slate-400">血統・舞台適性ランク:</span>
+                <span id="mGrade" class="text-amber-300 font-black text-base"></span>
+            </div>
+            <div class="space-y-2 bg-slate-950/60 p-3 rounded-xl border border-slate-800">
+                <div>
+                    <span class="text-slate-400 font-bold">父: </span><span id="mSire" class="text-white font-bold"></span>
+                    <p id="mTraits" class="text-slate-400 text-[11px] mt-0.5 leading-relaxed"></p>
+                </div>
+                <hr class="border-slate-800">
+                <div>
+                    <span class="text-slate-400 font-bold">母父: </span><span id="mBms" class="text-white font-bold"></span>
+                    <p id="mBonus" class="text-slate-400 text-[11px] mt-0.5 leading-relaxed"></p>
+                </div>
+            </div>
+            <div id="mTip" class="p-2.5 rounded-lg bg-indigo-950/50 border border-indigo-500/30 text-indigo-300 text-[11px] leading-relaxed"></div>
+        </div>
+        <button onclick="closeHorseModal()" class="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs py-2.5 rounded-lg font-bold transition">閉じる</button>
+    </div>
+</div>
+<script src="/static/modal.js"></script>
+
 </body>
 </html>
 """
@@ -826,6 +897,20 @@ def apply_custom_formula_bias(df: pd.DataFrame, bias_data: dict, weights: dict):
             bonus += (w_joc * 0.6)
 
         waku = int(row.get("waku", 1))
+
+        # 新馬戦判定 & 血統ボーナス自動加算
+        is_shinba_race = any(k in race_title for k in ["新馬", "初出走", "2歳新馬", "メイクデビュー"])
+        b_score = row.get("blood_score", 0.0)
+        if is_shinba_race:
+            # 新馬戦は過去走タイムがないため、血統適性を主軸（高ウェイト）に反映
+            bonus += b_score * 1.8
+            if row.get("blood_grade") in ["S+", "S", "A+"]:
+                tags.append("血統特注")
+        else:
+            # 通常レースは適性スパイスとして加算
+            bonus += b_score * 0.6
+            if row.get("blood_grade") in ["S+", "S"]:
+                tags.append("血統○")
         if waku in [1, 2, 3]:
             bonus += (bias_data["inner_bonus"] * (w_bias / 1.5))
             if bias_data["inner_bonus"] >= 2.0:
